@@ -18,6 +18,7 @@ import (
 
 	dbm "github.com/cosmos/cosmos-db"
 	evmante "github.com/cosmos/evm/ante"
+	antegasless "github.com/cosmos/evm/ante/gasless"
 	antetypes "github.com/cosmos/evm/ante/types"
 	evmencoding "github.com/cosmos/evm/encoding"
 	evmaddress "github.com/cosmos/evm/encoding/address"
@@ -34,6 +35,9 @@ import (
 	"github.com/cosmos/evm/x/feemarket"
 	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
+	gaslessmodule "github.com/cosmos/evm/x/gasless"
+	gaslesskeeper "github.com/cosmos/evm/x/gasless/keeper"
+	gaslesstypes "github.com/cosmos/evm/x/gasless/types"
 	ibccallbackskeeper "github.com/cosmos/evm/x/ibc/callbacks/keeper"
 	"github.com/cosmos/evm/x/ibc/transfer"
 	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
@@ -186,6 +190,7 @@ type EVMD struct {
 	EVMKeeper         *evmkeeper.Keeper
 	Erc20Keeper       erc20keeper.Keeper
 	PreciseBankKeeper precisebankkeeper.Keeper
+	GaslessKeeper     gaslesskeeper.Keeper
 	EVMMempool        *evmmempool.ExperimentalEVMMempool
 
 	// the module manager
@@ -237,7 +242,7 @@ func NewExampleApp(
 		// ibc keys
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
 		// Cosmos EVM store keys
-		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey,
+		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey, gaslesstypes.StoreKey,
 	)
 	oKeys := storetypes.NewObjectStoreKeys(banktypes.ObjectStoreKey, evmtypes.ObjectKey)
 
@@ -488,6 +493,15 @@ func NewExampleApp(
 		&app.TransferKeeper,
 	)
 
+	// Set up Gasless keeper
+	app.GaslessKeeper = gaslesskeeper.NewKeeper(
+		appCodec,
+		keys[gaslesstypes.StoreKey],
+		app.BankKeeper,
+		app.AccountKeeper,
+		app.EVMKeeper,
+	)
+
 	// instantiate IBC transfer keeper AFTER the ERC-20 keeper to use it in the instantiation
 	app.TransferKeeper = transferkeeper.NewKeeper(
 		appCodec,
@@ -582,8 +596,8 @@ func NewExampleApp(
 		// Cosmos EVM modules
 		vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, app.AccountKeeper.AddressCodec()),
 		feemarket.NewAppModule(app.FeeMarketKeeper),
-		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
 		precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AccountKeeper),
+		gaslessmodule.NewAppModule(app.GaslessKeeper),
 	)
 
 	// BasicModuleManager defines the module BasicManager which is in charge of setting up basic,
@@ -673,10 +687,12 @@ func NewExampleApp(
 		feemarkettypes.ModuleName,
 		erc20types.ModuleName,
 		precisebanktypes.ModuleName,
+		gaslesstypes.ModuleName,
 
 		ibctransfertypes.ModuleName,
 		genutiltypes.ModuleName, evidencetypes.ModuleName, authz.ModuleName,
 		feegrant.ModuleName, upgradetypes.ModuleName, vestingtypes.ModuleName,
+		consensusparamtypes.ModuleName,
 	}
 	app.ModuleManager.SetOrderInitGenesis(genesisModuleOrder...)
 	app.ModuleManager.SetOrderExportGenesis(genesisModuleOrder...)
@@ -793,12 +809,23 @@ func (app *EVMD) setAnteHandler(txConfig client.TxConfig, maxGasWanted uint64) {
 		MaxTxGasWanted:         maxGasWanted,
 		DynamicFeeChecker:      true,
 		PendingTxListener:      app.onPendingTx,
+		GaslessKeeper:          &app.GaslessKeeper,
 	}
 	if err := options.Validate(); err != nil {
 		panic(err)
 	}
 
-	app.SetAnteHandler(evmante.NewAnteHandler(options))
+	baseHandler := evmante.NewAnteHandler(options)
+
+	// Wrap with gasless decorator to enable gasless transactions
+	gaslessDecorator := antegasless.NewGaslessDecorator(app.GaslessKeeper)
+
+	// Create combined ante handler: gasless decorator first, then base EVM handler
+	combinedHandler := func(ctx sdk.Context, tx sdk.Tx, simulate bool) (sdk.Context, error) {
+		ctx.Logger().Error("COMBINED ANTE HANDLER CALLED")
+		return gaslessDecorator.AnteHandle(ctx, tx, simulate, baseHandler)
+	}
+	app.SetAnteHandler(combinedHandler)
 }
 
 func (app *EVMD) onPendingTx(hash common.Hash) {

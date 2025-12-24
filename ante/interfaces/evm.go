@@ -34,3 +34,11 @@ type FeeMarketKeeper interface {
 type ProtoTxProvider interface {
 	GetProtoTx() *tx.Tx
 }
+
+// GaslessKeeper exposes the required gasless keeper interface for ante handlers
+type GaslessKeeper interface {
+	IsGaslessAllowed(ctx sdk.Context, ethTo string) (bool, sdk.AccAddress, error)
+	ChargeSponsor(ctx sdk.Context, sponsor sdk.AccAddress, fee sdk.Coins) error
+	ValidateGasLimit(ctx sdk.Context, gas uint64) error
+	CheckBlockSubsidyLimit(ctx sdk.Context, newFee sdk.Coins) error
+}

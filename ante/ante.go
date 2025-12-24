@@ -33,6 +33,8 @@ type HandlerOptions struct {
 	// use dynamic fee checker or the cosmos-sdk default one for native transactions
 	DynamicFeeChecker bool
 	PendingTxListener PendingTxListener
+	// Gasless keeper for sponsoring transactions
+	GaslessKeeper anteinterfaces.GaslessKeeper
 }
 
 // Validate checks if the keepers are defined

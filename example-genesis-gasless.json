@@ -1,0 +1,16 @@
+{
+  "app_state": {
+    "gasless": {
+      "params": {
+        "enabled": true,
+        "allowed_contracts": [
+          "0xAa00000000000000000000000000000000000000",
+          "0xBb11111111111111111111111111111111111111"
+        ],
+        "default_sponsor": "evmos1sponsoraddresshere1234567890abcdefgh",
+        "max_gas_per_tx": 500000,
+        "max_subsidy_per_block": "10000000000000000000"
+      }
+    }
+  }
+}

@@ -31,8 +31,8 @@ func InitAppConfig(denom string, evmChainID uint64) (string, interface{}) {
 	// - if you set srvCfg.MinGasPrices non-empty, validators CAN tweak their
 	//   own app.toml to override, or use this default value.
 	//
-	// In this example application, we set the min gas prices to 0.
-	srvCfg.MinGasPrices = "0" + denom
+	// Set minimum gas price to 1 Gwei to prevent spam transactions
+	srvCfg.MinGasPrices = "1000000000" + denom
 
 	evmCfg := cosmosevmserverconfig.DefaultEVMConfig()
 	evmCfg.EVMChainID = evmChainID

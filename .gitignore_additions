@@ -1,0 +1,9 @@
+# Gasless feature documentation (temporary)
+GASLESS_*.md
+example-genesis-gasless.json
+
+# Test scripts
+evmd/cmd/gasless-test/
+
+# Build artifacts
+evmd/cmd/evmd/evmd

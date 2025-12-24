@@ -8,6 +8,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool"
 	ethtypes "github.com/ethereum/go-ethereum/core/types"
 
+	gaslessante "github.com/cosmos/evm/ante/gasless"
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
@@ -103,6 +104,12 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		return ctx, err
 	}
 
+	// Determine whether this tx has been marked as gasless by the GaslessDecorator.
+	isGasless := false
+	if info, ok := gaslessante.GetGaslessInfo(ctx); ok && info.Enabled {
+		isGasless = true
+	}
+
 	// call go-ethereum transaction validation
 	header := ethtypes.Header{
 		GasLimit:   ethTx.Gas(),
@@ -132,7 +139,7 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	// the price instead of the fee. This would save some computation.
 	//
 	// 2. mempool inclusion fee
-	if ctx.IsCheckTx() && !simulate {
+	if ctx.IsCheckTx() && !simulate && !isGasless {
 		// FIX: Mempool dec should be converted
 		if err := CheckMempoolFee(fee, decUtils.MempoolMinGasPrice, gasLimit, decUtils.Rules.IsLondon); err != nil {
 			return ctx, err
@@ -150,8 +157,10 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	}
 
 	// 3. min gas price (global min fee)
-	if err := CheckGlobalFee(fee, decUtils.GlobalMinGasPrice, gasLimit); err != nil {
-		return ctx, err
+	if !isGasless {
+		if err := CheckGlobalFee(fee, decUtils.GlobalMinGasPrice, gasLimit); err != nil {
+			return ctx, err
+		}
 	}
 
 	// 4. validate msg contents
@@ -178,16 +187,18 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	// We get the account with the balance from the EVM keeper because it is
 	// using a wrapper of the bank keeper as a dependency to scale all
 	// balances to 18 decimals.
-	account := md.evmKeeper.GetAccount(ctx, fromAddr)
-	if err := VerifyAccountBalance(
-		ctx,
-		md.evmKeeper,
-		md.accountKeeper,
-		account,
-		fromAddr,
-		ethTx,
-	); err != nil {
-		return ctx, err
+	if !isGasless {
+		account := md.evmKeeper.GetAccount(ctx, fromAddr)
+		if err := VerifyAccountBalance(
+			ctx,
+			md.evmKeeper,
+			md.accountKeeper,
+			account,
+			fromAddr,
+			ethTx,
+		); err != nil {
+			return ctx, err
+		}
 	}
 
 	// 7. can transfer
@@ -214,17 +225,24 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		ctx.IsCheckTx(),
 	)
 	if err != nil {
-		return ctx, err
+		// For gasless transactions we rely on the modified go-ethereum fork to
+		// handle subsidy semantics. At the Cosmos ante level we only enforce
+		// standard fee rules for non-gasless txs.
+		if !isGasless {
+			return ctx, err
+		}
 	}
 
-	err = ConsumeFeesAndEmitEvent(
-		ctx,
-		md.evmKeeper,
-		msgFees,
-		from,
-	)
-	if err != nil {
-		return ctx, err
+	if !isGasless {
+		err = ConsumeFeesAndEmitEvent(
+			ctx,
+			md.evmKeeper,
+			msgFees,
+			from,
+		)
+		if err != nil {
+			return ctx, err
+		}
 	}
 
 	gasWanted := UpdateCumulativeGasWanted(
@@ -268,8 +286,10 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	// Emit event unconditionally - ctx.TxIndex() will be valid during block execution
 	EmitTxHashEvent(ctx, ethMsg, uint64(ctx.TxIndex())) // #nosec G115 -- no overlfow here
 
-	if err := CheckTxFee(txFeeInfo, decUtils.TxFee, decUtils.TxGasLimit); err != nil {
-		return ctx, err
+	if !isGasless {
+		if err := CheckTxFee(txFeeInfo, decUtils.TxFee, decUtils.TxGasLimit); err != nil {
+			return ctx, err
+		}
 	}
 
 	ctx, err = CheckBlockGasLimit(ctx, decUtils.GasWanted, decUtils.MinPriority)

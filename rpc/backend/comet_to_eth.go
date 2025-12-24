@@ -277,8 +277,27 @@ func (b *Backend) ReceiptsFromCometBlock(
 
 		cumulatedGasUsed += txResult.GasUsed
 
+		// Check if this is a gasless transaction by looking for gasless_tx event
+		isGasless := false
+		for _, event := range blockRes.TxsResults[txResult.TxIndex].Events {
+			if event.Type == "gasless_tx" {
+				for _, attr := range event.Attributes {
+					if string(attr.Key) == "enabled" && string(attr.Value) == "true" {
+						isGasless = true
+						break
+					}
+				}
+			}
+			if isGasless {
+				break
+			}
+		}
+
 		var effectiveGasPrice *big.Int
-		if baseFee != nil {
+		if isGasless {
+			// For gasless transactions, effectiveGasPrice should be 0
+			effectiveGasPrice = big.NewInt(0)
+		} else if baseFee != nil {
 			effectiveGasPrice = rpctypes.EffectiveGasPrice(ethMsg.Raw.Transaction, baseFee)
 		} else {
 			effectiveGasPrice = ethMsg.Raw.GasFeeCap()
