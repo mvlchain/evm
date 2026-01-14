@@ -477,6 +477,14 @@ func NewExampleApp(
 		),
 	)
 
+	// Register Fee Sponsor precompile after EVMKeeper is initialized
+	// This is done separately because the Fee Sponsor precompile needs the EVMKeeper reference
+	feeSponsorPrecompiles := precompiletypes.NewStaticPrecompiles().
+		WithFeeSponsorPrecompile(app.EVMKeeper)
+	for addr, precompile := range feeSponsorPrecompiles {
+		app.EVMKeeper.RegisterStaticPrecompile(addr, precompile)
+	}
+
 	app.Erc20Keeper = erc20keeper.NewKeeper(
 		keys[erc20types.StoreKey],
 		appCodec,

@@ -12,6 +12,7 @@ import (
 	"github.com/cosmos/evm/precompiles/bech32"
 	cmn "github.com/cosmos/evm/precompiles/common"
 	distprecompile "github.com/cosmos/evm/precompiles/distribution"
+	feesponsorprecompile "github.com/cosmos/evm/precompiles/feesponsor"
 	govprecompile "github.com/cosmos/evm/precompiles/gov"
 	ics02precompile "github.com/cosmos/evm/precompiles/ics02"
 	ics20precompile "github.com/cosmos/evm/precompiles/ics20"
@@ -20,6 +21,7 @@ import (
 	stakingprecompile "github.com/cosmos/evm/precompiles/staking"
 	erc20Keeper "github.com/cosmos/evm/x/erc20/keeper"
 	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
+	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
 	channelkeeper "github.com/cosmos/ibc-go/v10/modules/core/04-channel/keeper"
 
 	"github.com/cosmos/cosmos-sdk/codec"
@@ -182,5 +184,13 @@ func (s StaticPrecompiles) WithSlashingPrecompile(
 	)
 
 	s[slashingPrecompile.Address()] = slashingPrecompile
+	return s
+}
+
+func (s StaticPrecompiles) WithFeeSponsorPrecompile(
+	vmKeeper *evmkeeper.Keeper,
+) StaticPrecompiles {
+	feeSponsorPrecompile := feesponsorprecompile.NewPrecompile(vmKeeper)
+	s[feeSponsorPrecompile.Address()] = feeSponsorPrecompile
 	return s
 }

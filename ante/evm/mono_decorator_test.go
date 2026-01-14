@@ -68,6 +68,24 @@ func (k *ExtendedEVMKeeper) GetParams(_ sdk.Context) evmsdktypes.Params {
 func (k *ExtendedEVMKeeper) GetBaseFee(_ sdk.Context) *big.Int           { return big.NewInt(0) }
 func (k *ExtendedEVMKeeper) GetMinGasPrice(_ sdk.Context) math.LegacyDec { return math.LegacyZeroDec() }
 
+func (k *ExtendedEVMKeeper) GetActiveSponsorshipFor(
+	_ sdk.Context,
+	_ common.Address,
+	_ uint64,
+	_ *common.Address,
+	_ *math.Int,
+) (*evmsdktypes.FeeSponsor, error) {
+	return nil, nil
+}
+
+func (k *ExtendedEVMKeeper) UseSponsorshipForTransaction(
+	_ sdk.Context,
+	_ string,
+	_ uint64,
+) error {
+	return nil
+}
+
 // only methods called by EVMMonoDecorator
 type MockFeeMarketKeeper struct{}
 

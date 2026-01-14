@@ -1,0 +1,11 @@
+{
+  "sponsor": {
+    "address": "0x00000Be6819f41400225702D32d3dd23663Dd690"
+  },
+  "beneficiary": {
+    "address": "0x64C24E738487ba4eA38B3568Dfcc5867B141290d",
+    "privateKey": "0xe659e2c4cc9347c30e1293917ee3578793aae8e628d997cba1bfda9e5c17d980"
+  },
+  "sponsorshipId": "0x3b331d71c9c685485f64822ee369accca604007addde960812ac183d82e2e903",
+  "counterAddress": "0x5C019eaA6F0c6219305Ee76bc1402028c4ee9cAA"
+}

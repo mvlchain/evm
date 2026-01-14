@@ -1,0 +1,97 @@
+syntax = "proto3";
+package cosmos.evm.vm.v1;
+
+import "gogoproto/gogo.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/cosmos/evm/x/vm/types";
+
+// FeeSponsor defines a fee sponsorship relationship where a sponsor pays gas fees
+// for a beneficiary's transactions
+message FeeSponsor {
+  option (gogoproto.equal) = true;
+
+  // sponsor is the hex address paying the fees
+  string sponsor = 1;
+
+  // beneficiary is the hex address whose transactions are sponsored
+  string beneficiary = 2;
+
+  // max_gas_per_tx is the maximum gas limit this sponsorship covers per transaction
+  uint64 max_gas_per_tx = 3;
+
+  // total_gas_budget is the total amount of gas remaining in this sponsorship
+  uint64 total_gas_budget = 4;
+
+  // expiration_height is the block height when this sponsorship expires
+  int64 expiration_height = 5;
+
+  // created_at is the block height when this sponsorship was created
+  int64 created_at = 6;
+
+  // sponsorship_id is a unique identifier for this sponsorship
+  string sponsorship_id = 7;
+
+  // is_active indicates if this sponsorship is currently active
+  bool is_active = 8;
+
+  // conditions defines optional advanced conditions for the sponsorship
+  SponsorshipConditions conditions = 9;
+
+  // gas_used tracks total gas consumed by this sponsorship
+  uint64 gas_used = 10;
+
+  // transaction_count tracks number of transactions sponsored
+  uint64 transaction_count = 11;
+}
+
+// SponsorshipConditions defines optional advanced conditions for sponsorships
+message SponsorshipConditions {
+  option (gogoproto.equal) = true;
+
+  // whitelisted_contracts restricts sponsorship to only these contract addresses
+  // Empty list means all contracts allowed
+  repeated string whitelisted_contracts = 1;
+
+  // max_tx_value restricts sponsorship to transactions with value <= this amount
+  // Zero means no restriction
+  string max_tx_value = 2 [
+    (gogoproto.customtype) = "cosmossdk.io/math.Int",
+    (gogoproto.nullable) = false
+  ];
+
+  // daily_gas_limit restricts total gas usage per day
+  // Zero means no daily limit
+  uint64 daily_gas_limit = 3;
+
+  // require_signature requires sponsor to co-sign each transaction
+  bool require_signature = 4;
+}
+
+// SponsorshipRegistry maintains all active sponsorships
+message SponsorshipRegistry {
+  // sponsorships is a map of beneficiary address to their sponsorships
+  map<string, BeneficiarySponsorships> sponsorships = 1;
+}
+
+// BeneficiarySponsorships holds all sponsorships for a single beneficiary
+message BeneficiarySponsorships {
+  repeated FeeSponsor sponsors = 1;
+}
+
+// SponsorshipUsageRecord tracks gas usage per day for daily limits
+message SponsorshipUsageRecord {
+  string sponsorship_id = 1;
+  int64 date = 2; // Unix timestamp (day)
+  uint64 gas_used = 3;
+}
+
+// BeneficiarySponsorshipIndex stores list of sponsorship IDs for a beneficiary
+message BeneficiarySponsorshipIndex {
+  repeated string sponsorship_ids = 1;
+}
+
+// DailyUsage tracks gas usage for a specific day
+message DailyUsage {
+  uint64 gas_used = 1;
+}

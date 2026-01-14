@@ -1,0 +1,239 @@
+[
+  {
+    "type": "function",
+    "name": "createSponsorship",
+    "inputs": [
+      {
+        "name": "beneficiary",
+        "type": "address"
+      },
+      {
+        "name": "maxGasPerTx",
+        "type": "uint64"
+      },
+      {
+        "name": "totalGasBudget",
+        "type": "uint64"
+      },
+      {
+        "name": "expirationHeight",
+        "type": "int64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "createSponsorshipWithConditions",
+    "inputs": [
+      {
+        "name": "beneficiary",
+        "type": "address"
+      },
+      {
+        "name": "maxGasPerTx",
+        "type": "uint64"
+      },
+      {
+        "name": "totalGasBudget",
+        "type": "uint64"
+      },
+      {
+        "name": "expirationHeight",
+        "type": "int64"
+      },
+      {
+        "name": "whitelistedContracts",
+        "type": "address[]"
+      },
+      {
+        "name": "maxTxValue",
+        "type": "uint256"
+      },
+      {
+        "name": "dailyGasLimit",
+        "type": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "cancelSponsorship",
+    "inputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "refundedAmount",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "getSponsorship",
+    "inputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sponsor",
+        "type": "address"
+      },
+      {
+        "name": "beneficiary",
+        "type": "address"
+      },
+      {
+        "name": "maxGasPerTx",
+        "type": "uint64"
+      },
+      {
+        "name": "totalGasBudget",
+        "type": "uint64"
+      },
+      {
+        "name": "expirationHeight",
+        "type": "int64"
+      },
+      {
+        "name": "isActive",
+        "type": "bool"
+      },
+      {
+        "name": "gasUsed",
+        "type": "uint64"
+      },
+      {
+        "name": "transactionCount",
+        "type": "uint64"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "getSponsorshipsFor",
+    "inputs": [
+      {
+        "name": "beneficiary",
+        "type": "address"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sponsorshipIds",
+        "type": "bytes32[]"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "isSponsored",
+    "inputs": [
+      {
+        "name": "beneficiary",
+        "type": "address"
+      },
+      {
+        "name": "gasEstimate",
+        "type": "uint64"
+      }
+    ],
+    "outputs": [
+      {
+        "name": "sponsored",
+        "type": "bool"
+      },
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32"
+      }
+    ],
+    "stateMutability": "view"
+  },
+  {
+    "type": "event",
+    "name": "SponsorshipCreated",
+    "inputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "sponsor",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "beneficiary",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "totalBudget",
+        "type": "uint64",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "SponsorshipUsed",
+    "inputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "beneficiary",
+        "type": "address",
+        "indexed": true
+      },
+      {
+        "name": "gasUsed",
+        "type": "uint64",
+        "indexed": false
+      }
+    ]
+  },
+  {
+    "type": "event",
+    "name": "SponsorshipCancelled",
+    "inputs": [
+      {
+        "name": "sponsorshipId",
+        "type": "bytes32",
+        "indexed": true
+      },
+      {
+        "name": "refundedAmount",
+        "type": "uint64",
+        "indexed": false
+      }
+    ]
+  }
+]

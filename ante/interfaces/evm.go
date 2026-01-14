@@ -7,6 +7,8 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/holiman/uint256"
 
+	"cosmossdk.io/math"
+
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	"github.com/cosmos/evm/x/vm/statedb"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -24,6 +26,20 @@ type EVMKeeper interface {
 	DeductTxCostsFromUserBalance(ctx sdk.Context, fees sdk.Coins, from common.Address) error
 	SpendableCoin(ctx sdk.Context, addr common.Address) *uint256.Int
 	GetParams(ctx sdk.Context) evmtypes.Params
+
+	// Fee Sponsorship methods
+	GetActiveSponsorshipFor(
+		ctx sdk.Context,
+		beneficiary common.Address,
+		gasLimit uint64,
+		targetContract *common.Address,
+		txValue *math.Int,
+	) (*evmtypes.FeeSponsor, error)
+	UseSponsorshipForTransaction(
+		ctx sdk.Context,
+		sponsorshipID string,
+		gasUsed uint64,
+	) error
 }
 
 // FeeMarketKeeper exposes the required feemarket keeper interface required for ante handlers

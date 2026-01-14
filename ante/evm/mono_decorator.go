@@ -11,6 +11,7 @@ import (
 	anteinterfaces "github.com/cosmos/evm/ante/interfaces"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
 	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
+	"github.com/cosmos/evm/x/vm/statedb"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
 
 	errorsmod "cosmossdk.io/errors"
@@ -174,20 +175,66 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 	from := ethMsg.GetFrom()
 	fromAddr := common.BytesToAddress(from)
 
+	// 5a. Check for fee sponsorship early to determine if balance check is needed
+	txValue := ethTx.Value()
+	txValueInt := sdkmath.NewIntFromBigInt(txValue)
+	sponsorship, sponsorErr := md.evmKeeper.GetActiveSponsorshipFor(
+		ctx,
+		fromAddr,
+		gas,
+		ethTx.To(),
+		&txValueInt,
+	)
+	isSponsored := sponsorErr == nil && sponsorship != nil
+
 	// 6. account balance verification
 	// We get the account with the balance from the EVM keeper because it is
 	// using a wrapper of the bank keeper as a dependency to scale all
 	// balances to 18 decimals.
 	account := md.evmKeeper.GetAccount(ctx, fromAddr)
-	if err := VerifyAccountBalance(
-		ctx,
-		md.evmKeeper,
-		md.accountKeeper,
-		account,
-		fromAddr,
-		ethTx,
-	); err != nil {
-		return ctx, err
+
+	// Skip balance check for gas fees if transaction is sponsored
+	// But still check if sender has balance for the value transfer
+	if !isSponsored {
+		if err := VerifyAccountBalance(
+			ctx,
+			md.evmKeeper,
+			md.accountKeeper,
+			account,
+			fromAddr,
+			ethTx,
+		); err != nil {
+			return ctx, err
+		}
+	} else {
+		// For sponsored transactions, only verify the sender has enough for the value transfer
+		// EOA check
+		if account != nil && account.HasCodeHash() {
+			code := md.evmKeeper.GetCode(ctx, common.BytesToHash(account.CodeHash))
+			_, delegated := ethtypes.ParseDelegation(code)
+			if len(code) > 0 && !delegated {
+				return ctx, errorsmod.Wrapf(
+					errortypes.ErrInvalidType,
+					"the sender is not EOA: address %s", fromAddr,
+				)
+			}
+		}
+
+		// Value transfer check (only if transaction has value)
+		if txValue != nil && txValue.Sign() > 0 {
+			if account == nil {
+				acc := md.accountKeeper.NewAccountWithAddress(ctx, fromAddr.Bytes())
+				md.accountKeeper.SetAccount(ctx, acc)
+				account = statedb.NewEmptyAccount()
+			}
+			balance := sdkmath.NewIntFromBigInt(account.Balance.ToBig())
+			if balance.LT(txValueInt) {
+				return ctx, errorsmod.Wrapf(
+					errortypes.ErrInsufficientFunds,
+					"sender balance < tx value (%s < %s)", balance.String(), txValueInt.String(),
+				)
+			}
+		}
 	}
 
 	// 7. can transfer
@@ -217,13 +264,27 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		return ctx, err
 	}
 
-	err = ConsumeFeesAndEmitEvent(
+	// 8a. Use sponsorship result from earlier check
+	var feePayerAddr []byte
+
+	if isSponsored {
+		// Transaction is sponsored - use sponsor's address for fee payment
+		sponsorAddr := common.HexToAddress(sponsorship.Sponsor)
+		feePayerAddr = sponsorAddr.Bytes()
+
+		// Track sponsorship usage
+		_ = md.evmKeeper.UseSponsorshipForTransaction(ctx, sponsorship.SponsorshipId, gas)
+	} else {
+		// No sponsorship or error - sender pays (normal flow)
+		feePayerAddr = from
+	}
+
+	if err = ConsumeFeesAndEmitEvent(
 		ctx,
 		md.evmKeeper,
 		msgFees,
-		from,
-	)
-	if err != nil {
+		feePayerAddr,
+	); err != nil {
 		return ctx, err
 	}
 

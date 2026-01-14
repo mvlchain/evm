@@ -1,0 +1,17 @@
+node_modules
+.env
+coverage
+coverage.json
+typechain
+typechain-types
+
+# Hardhat files
+cache
+artifacts
+
+# Logs
+*.log
+
+# Account data (contains private keys!)
+accounts.json
+deployments.json
