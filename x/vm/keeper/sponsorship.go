@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"fmt"
+	"math/big"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -302,13 +303,41 @@ func (k *Keeper) isSponsorshipValid(
 		return false
 	}
 
+	// Check if sponsor has sufficient balance to pay for the gas
+	sponsor := common.HexToAddress(sponsorship.Sponsor)
+	sponsorAccAddr := sdk.AccAddress(sponsor.Bytes())
+	params := k.GetParams(ctx)
+	evmDenom := params.EvmDenom
+
+	// Get sponsor's balance
+	sponsorBalance := k.bankWrapper.GetBalance(ctx, sponsorAccAddr, evmDenom)
+
+	// Get current base fee (gas price)
+	baseFee := k.GetBaseFee(ctx)
+	if baseFee == nil {
+		// Fallback to minimum gas price if base fee is not set
+		minGasPrice := k.GetMinGasPrice(ctx)
+		baseFee = minGasPrice.TruncateInt().BigInt()
+	}
+
+	// Calculate estimated cost: gasLimit * baseFee (using big.Int)
+	gasLimitBig := new(big.Int).SetUint64(gasLimit)
+	estimatedCostBig := new(big.Int).Mul(gasLimitBig, baseFee)
+
+	// Convert to math.Int for comparison with balance
+	estimatedCost := math.NewIntFromBigInt(estimatedCostBig)
+
+	// Check if sponsor has sufficient balance
+	if sponsorBalance.Amount.LT(estimatedCost) {
+		return false
+	}
+
 	// Check conditions if present
 	if sponsorship.Conditions != nil {
 		// Check whitelisted contracts
-		if len(sponsorship.Conditions.WhitelistedContracts) > 0 {
-			if targetContract == nil {
-				return false
-			}
+		if len(sponsorship.Conditions.WhitelistedContracts) > 0 && targetContract != nil {
+			// Only validate whitelist if targetContract is provided
+			// If targetContract is nil (e.g., from isSponsored query), skip this check
 			found := false
 			for _, addr := range sponsorship.Conditions.WhitelistedContracts {
 				if common.HexToAddress(addr) == *targetContract {

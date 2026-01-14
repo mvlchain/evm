@@ -3,6 +3,7 @@ package feesponsor
 import (
 	"bytes"
 	"fmt"
+	"math/big"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
@@ -184,7 +185,8 @@ func (p Precompile) createSponsorshipWithConditions(ctx sdk.Context, contract *v
 	totalGasBudget := args[2].(uint64)
 	expirationHeight := args[3].(int64)
 	whitelistedContracts := args[4].([]common.Address)
-	maxTxValue := args[5].(*math.Int)
+	maxTxValueBigInt := args[5].(*big.Int)
+	maxTxValue := math.NewIntFromBigInt(maxTxValueBigInt)
 	dailyGasLimit := args[6].(uint64)
 
 	sponsor := contract.Caller()
@@ -197,7 +199,7 @@ func (p Precompile) createSponsorshipWithConditions(ctx sdk.Context, contract *v
 
 	conditions := &evmtypes.SponsorshipConditions{
 		WhitelistedContracts: whitelistedStrings,
-		MaxTxValue:          *maxTxValue,
+		MaxTxValue:          maxTxValue,
 		DailyGasLimit:       dailyGasLimit,
 		RequireSignature:    false,
 	}

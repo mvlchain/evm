@@ -15,6 +15,7 @@
     "transfer": "hardhat run --network cosmosEVM scripts/transfer.js",
     "demo": "hardhat run scripts/fee-sponsorship-demo.js --network cosmosEVM",
     "sponsor-contract": "hardhat run scripts/sponsor-contract.js --network cosmosEVM",
+    "test-conditional": "hardhat run scripts/test-conditional-sponsorship.js --network cosmosEVM",
     "node": "hardhat node",
     "console": "hardhat console --network cosmosEVM"
   },
