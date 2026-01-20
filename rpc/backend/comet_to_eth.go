@@ -114,32 +114,45 @@ func (b *Backend) EthMsgsFromCometBlock(
 
 	txResults := blockRes.TxsResults
 
+	fmt.Printf("[DEBUG EthMsgsFromCometBlock] Block Height=%d, Total Txs=%d\n",
+		block.Height, len(block.Txs))
+
 	for i, tx := range block.Txs {
+		fmt.Printf("[DEBUG EthMsgsFromCometBlock] Tx %d: Code=%d, Log=%s\n",
+			i, txResults[i].Code, txResults[i].Log)
+
 		// Check if tx exists on EVM by cross checking with blockResults:
 		//  - Include unsuccessful tx that exceeds block gas limit
 		//  - Include unsuccessful tx that failed when committing changes to stateDB
 		//  - Exclude unsuccessful tx with any other error but ExceedBlockGasLimit
 		if !rpctypes.TxSucessOrExpectedFailure(txResults[i]) {
+			fmt.Printf("[DEBUG EthMsgsFromCometBlock] ❌ Tx %d filtered out - not success or expected failure\n", i)
 			b.Logger.Debug("invalid tx result code", "cosmos-hash", hexutil.Encode(tx.Hash()))
 			continue
 		}
+		fmt.Printf("[DEBUG EthMsgsFromCometBlock] ✅ Tx %d passed filter\n", i)
 
 		tx, err := b.ClientCtx.TxConfig.TxDecoder()(tx)
 		if err != nil {
+			fmt.Printf("[DEBUG EthMsgsFromCometBlock] ❌ Tx %d failed to decode: %v\n", i, err)
 			b.Logger.Debug("failed to decode transaction in block", "height", block.Height, "error", err.Error())
 			continue
 		}
+		fmt.Printf("[DEBUG EthMsgsFromCometBlock] ✅ Tx %d decoded, messages=%d\n", i, len(tx.GetMsgs()))
 
-		for _, msg := range tx.GetMsgs() {
+		for j, msg := range tx.GetMsgs() {
 			ethMsg, ok := msg.(*evmtypes.MsgEthereumTx)
 			if !ok {
+				fmt.Printf("[DEBUG EthMsgsFromCometBlock] ❌ Msg %d not MsgEthereumTx, type=%T\n", j, msg)
 				continue
 			}
+			fmt.Printf("[DEBUG EthMsgsFromCometBlock] ✅ Msg %d is MsgEthereumTx, hash=%s\n", j, ethMsg.Hash())
 
 			result = append(result, ethMsg)
 		}
 	}
 
+	fmt.Printf("[DEBUG EthMsgsFromCometBlock] Returning %d EthereumTx messages\n", len(result))
 	return result
 }
 
@@ -260,6 +273,10 @@ func (b *Backend) ReceiptsFromCometBlock(
 	ctx, span := tracer.Start(ctx, "ReceiptsFromCometBlock")
 	defer func() { evmtrace.EndSpanErr(span, err) }()
 
+	// DEBUG: Entry point
+	fmt.Printf("[DEBUG ReceiptsFromCometBlock] ENTER - Block Height=%d, Num Messages=%d\n",
+		resBlock.Block.Height, len(msgs))
+
 	baseFee, err := b.BaseFee(ctx, blockRes)
 	if err != nil {
 		// handle the error for pruned node.
@@ -270,6 +287,8 @@ func (b *Backend) ReceiptsFromCometBlock(
 	receipts := make([]*ethtypes.Receipt, len(msgs))
 	cumulatedGasUsed := uint64(0)
 	for i, ethMsg := range msgs {
+		fmt.Printf("[DEBUG ReceiptsFromCometBlock] Processing message %d/%d, Hash=%s\n",
+			i+1, len(msgs), ethMsg.Hash())
 		txResult, err := b.GetTxByEthHash(ctx, ethMsg.Hash())
 		if err != nil {
 			return nil, fmt.Errorf("tx not found: hash=%s, error=%s", ethMsg.Hash(), err.Error())
@@ -297,8 +316,19 @@ func (b *Backend) ReceiptsFromCometBlock(
 		}
 
 		msgIndex := int(txResult.MsgIndex) // #nosec G115 -- checked for int overflow already
+
+		// DEBUG: Log transaction result data
+		txResultData := blockRes.TxsResults[txResult.TxIndex].Data
+		fmt.Printf("[DEBUG ReceiptsFromCometBlock] TxIndex=%d, MsgIndex=%d, Data length=%d\n",
+			txResult.TxIndex, msgIndex, len(txResultData))
+		if len(txResultData) > 0 {
+			fmt.Printf("[DEBUG ReceiptsFromCometBlock] Data (first 100 bytes): %x\n", txResultData[:min(100, len(txResultData))])
+		} else {
+			fmt.Printf("[DEBUG ReceiptsFromCometBlock] ❌ Data is EMPTY!\n")
+		}
+
 		logs, err := evmtypes.DecodeMsgLogs(
-			blockRes.TxsResults[txResult.TxIndex].Data,
+			txResultData,
 			msgIndex,
 			uint64(resBlock.Block.Height), // #nosec G115 -- checked for int overflow already
 		)

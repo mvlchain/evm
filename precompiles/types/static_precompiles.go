@@ -18,6 +18,9 @@ import (
 	"github.com/cosmos/evm/precompiles/p256"
 	slashingprecompile "github.com/cosmos/evm/precompiles/slashing"
 	stakingprecompile "github.com/cosmos/evm/precompiles/staking"
+	doubleratchetprecompile "github.com/cosmos/evm/precompiles/doubleratchet"
+	keyregistryprecompile "github.com/cosmos/evm/precompiles/keyregistry"
+	ridehailprecompile "github.com/cosmos/evm/precompiles/ridehail"
 	erc20Keeper "github.com/cosmos/evm/x/erc20/keeper"
 	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
 	channelkeeper "github.com/cosmos/ibc-go/v10/modules/core/04-channel/keeper"
@@ -52,6 +55,33 @@ func (s StaticPrecompiles) WithBech32Precompile() StaticPrecompiles {
 		panic(fmt.Errorf("failed to instantiate bech32 precompile: %w", err))
 	}
 	s[bech32Precompile.Address()] = bech32Precompile
+	return s
+}
+
+func (s StaticPrecompiles) WithDoubleRatchetPrecompile() StaticPrecompiles {
+	doubleratchetPrecompile, err := doubleratchetprecompile.NewPrecompile(doubleRatchetPrecompileBaseGas)
+	if err != nil {
+		panic(fmt.Errorf("failed to instantiate double ratchet precompile: %w", err))
+	}
+	s[doubleratchetPrecompile.Address()] = doubleratchetPrecompile
+	return s
+}
+
+func (s StaticPrecompiles) WithKeyRegistryPrecompile() StaticPrecompiles {
+	keyRegistryPrecompile, err := keyregistryprecompile.NewPrecompile(keyRegistryPrecompileBaseGas)
+	if err != nil {
+		panic(fmt.Errorf("failed to instantiate key registry precompile: %w", err))
+	}
+	s[keyRegistryPrecompile.Address()] = keyRegistryPrecompile
+	return s
+}
+
+func (s StaticPrecompiles) WithRideHailPrecompile(keeper ridehailprecompile.RideHailKeeper) StaticPrecompiles {
+	rideHailPrecompile, err := ridehailprecompile.NewPrecompile(rideHailPrecompileBaseGas, keeper)
+	if err != nil {
+		panic(fmt.Errorf("failed to instantiate ridehail precompile: %w", err))
+	}
+	s[rideHailPrecompile.Address()] = rideHailPrecompile
 	return s
 }
 

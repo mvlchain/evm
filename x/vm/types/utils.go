@@ -59,9 +59,18 @@ func DecodeTxResponses(in []byte) ([]*MsgEthereumTxResponse, error) {
 		return nil, err
 	}
 	responses := make([]*MsgEthereumTxResponse, 0, len(txMsgData.MsgResponses))
-	for _, res := range txMsgData.MsgResponses {
+
+	// DEBUG: Log what we're seeing
+	expectedType := "/" + proto.MessageName(&MsgEthereumTxResponse{})
+	fmt.Printf("[DEBUG DecodeTxResponses] Total MsgResponses: %d\n", len(txMsgData.MsgResponses))
+	fmt.Printf("[DEBUG DecodeTxResponses] Expected TypeUrl: %s\n", expectedType)
+
+	for i, res := range txMsgData.MsgResponses {
+		fmt.Printf("[DEBUG DecodeTxResponses] MsgResponse[%d] TypeUrl: %s\n", i, res.TypeUrl)
+
 		var response MsgEthereumTxResponse
 		if res.TypeUrl != "/"+proto.MessageName(&response) {
+			fmt.Printf("[DEBUG DecodeTxResponses] Skipping MsgResponse[%d] - type mismatch\n", i)
 			continue
 		}
 		err := proto.Unmarshal(res.Value, &response)
@@ -70,6 +79,8 @@ func DecodeTxResponses(in []byte) ([]*MsgEthereumTxResponse, error) {
 		}
 		responses = append(responses, &response)
 	}
+
+	fmt.Printf("[DEBUG DecodeTxResponses] Returning %d responses\n", len(responses))
 	return responses, nil
 }
 

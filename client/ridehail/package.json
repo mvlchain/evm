@@ -1,0 +1,39 @@
+{
+  "name": "ridehail-client-tests",
+  "private": true,
+  "scripts": {
+    "test": "node -r ts-node/register src/ridehail_tests.ts",
+    "flow": "node -r ts-node/register src/flow_sample.ts",
+    "tester": "node -r ts-node/register src/tester.ts",
+    "tester_group": "node -r ts-node/register src/tester_group.ts",
+    "tester_proper": "node -r ts-node/register src/tester_proper.ts",
+    "tester_signal": "node -r ts-node/register src/tester_signal.ts",
+    "test_precompile": "node -r ts-node/register src/test_ridehail_precompile.ts",
+    "test_precompile_simple": "node -r ts-node/register src/test_precompile_simple.ts",
+    "test_keeper": "node -r ts-node/register src/test_keeper_persistence.ts",
+    "test_matching": "node -r ts-node/register test_core_matching.ts",
+    "test_debug": "node -r ts-node/register test_debug.ts",
+    "listen": "node -r ts-node/register event_listener.ts",
+    "check_tx": "node -r ts-node/register src/check_tx.ts",
+    "test_bech32": "node -r ts-node/register src/test_bech32.ts",
+    "test_state": "node -r ts-node/register src/test_state_direct.ts"
+  },
+  "dependencies": {
+    "@noble/ciphers": "^0.5.3",
+    "@noble/curves": "^1.4.0",
+    "@noble/hashes": "^1.4.0",
+    "@privacyresearch/curve25519-typescript": "^0.0.12",
+    "@privacyresearch/ed25519-ts": "^0.0.3",
+    "crypto-js": "^4.2.0",
+    "elliptic": "^6.6.1",
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "@types/crypto-js": "^4.2.2",
+    "@types/elliptic": "^6.4.18",
+    "@types/ws": "^8.18.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3",
+    "ws": "^8.19.0"
+  }
+}

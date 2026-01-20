@@ -1,0 +1,38 @@
+[
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "identityDhKey", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "identitySignKey", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "signedPreKey", "type": "bytes32" },
+      { "internalType": "bytes", "name": "signature", "type": "bytes" },
+      { "internalType": "uint64", "name": "expiresAt", "type": "uint64" }
+    ],
+    "name": "publishKeysV2",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "address", "name": "owner", "type": "address" }
+    ],
+    "name": "getKeys",
+    "outputs": [
+      {
+        "components": [
+          { "internalType": "bytes32", "name": "identityDhKey", "type": "bytes32" },
+          { "internalType": "bytes32", "name": "identitySignKey", "type": "bytes32" },
+          { "internalType": "bytes32", "name": "signedPreKey", "type": "bytes32" },
+          { "internalType": "bytes", "name": "signature", "type": "bytes" },
+          { "internalType": "uint64", "name": "expiresAt", "type": "uint64" },
+          { "internalType": "uint64", "name": "updatedAt", "type": "uint64" }
+        ],
+        "internalType": "struct KeyRegistry.KeyBundle",
+        "name": "bundle",
+        "type": "tuple"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

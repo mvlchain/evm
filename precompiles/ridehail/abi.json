@@ -1,0 +1,190 @@
+[
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "bytes32", "name": "cellTopic", "type": "bytes32" },
+      { "indexed": true, "internalType": "bytes32", "name": "regionTopic", "type": "bytes32" },
+      { "indexed": true, "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "indexed": false, "internalType": "address", "name": "rider", "type": "address" },
+      { "indexed": false, "internalType": "bytes32", "name": "paramsHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "pickupCommit", "type": "bytes32" },
+      { "indexed": false, "internalType": "bytes32", "name": "dropoffCommit", "type": "bytes32" },
+      { "indexed": false, "internalType": "uint64", "name": "commitEnd", "type": "uint64" },
+      { "indexed": false, "internalType": "uint64", "name": "revealEnd", "type": "uint64" },
+      { "indexed": false, "internalType": "uint256", "name": "riderDeposit", "type": "uint256" }
+    ],
+    "name": "RideRequested",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "driver", "type": "address" },
+      { "indexed": false, "internalType": "bytes32", "name": "commitHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "uint64", "name": "eta", "type": "uint64" },
+      { "indexed": false, "internalType": "uint256", "name": "bond", "type": "uint256" }
+    ],
+    "name": "DriverAcceptCommitted",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "driver", "type": "address" },
+      { "indexed": false, "internalType": "bytes32", "name": "revealHash", "type": "bytes32" },
+      { "indexed": false, "internalType": "uint64", "name": "eta", "type": "uint64" },
+      { "indexed": false, "internalType": "bytes32", "name": "driverCell", "type": "bytes32" }
+    ],
+    "name": "DriverAcceptRevealed",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "sessionId", "type": "uint256" },
+      { "indexed": true, "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "rider", "type": "address" },
+      { "indexed": false, "internalType": "address", "name": "driver", "type": "address" },
+      { "indexed": false, "internalType": "uint64", "name": "eta", "type": "uint64" }
+    ],
+    "name": "Matched",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "sessionId", "type": "uint256" },
+      { "indexed": true, "internalType": "address", "name": "sender", "type": "address" },
+      { "indexed": false, "internalType": "uint32", "name": "msgIndex", "type": "uint32" },
+      { "indexed": false, "internalType": "bytes", "name": "header", "type": "bytes" },
+      { "indexed": false, "internalType": "bytes", "name": "ciphertext", "type": "bytes" }
+    ],
+    "name": "EncryptedMessage",
+    "type": "event"
+  },
+  {
+    "anonymous": false,
+    "inputs": [
+      { "indexed": true, "internalType": "uint256", "name": "sessionId", "type": "uint256" },
+      { "indexed": false, "internalType": "uint8", "name": "newState", "type": "uint8" },
+      { "indexed": false, "internalType": "uint64", "name": "timestamp", "type": "uint64" }
+    ],
+    "name": "StateChanged",
+    "type": "event"
+  },
+  {
+    "inputs": [],
+    "name": "version",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "cellTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "regionTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "paramsHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "pickupCommit", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "dropoffCommit", "type": "bytes32" },
+      { "internalType": "uint32", "name": "maxDriverEta", "type": "uint32" },
+      { "internalType": "uint64", "name": "ttl", "type": "uint64" }
+    ],
+    "name": "validateCreateRequest",
+    "outputs": [
+      { "internalType": "bool", "name": "ok", "type": "bool" },
+      { "internalType": "string", "name": "reason", "type": "string" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextRequestId",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "nextSessionId",
+    "outputs": [{ "internalType": "uint256", "name": "", "type": "uint256" }],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "bytes32", "name": "cellTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "regionTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "paramsHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "pickupCommit", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "dropoffCommit", "type": "bytes32" },
+      { "internalType": "uint32", "name": "maxDriverEta", "type": "uint32" },
+      { "internalType": "uint64", "name": "ttl", "type": "uint64" }
+    ],
+    "name": "createRequest",
+    "outputs": [{ "internalType": "uint256", "name": "requestId", "type": "uint256" }],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "internalType": "bytes32", "name": "commitHash", "type": "bytes32" },
+      { "internalType": "uint64", "name": "eta", "type": "uint64" }
+    ],
+    "name": "acceptCommit",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "requestId", "type": "uint256" },
+      { "internalType": "uint64", "name": "eta", "type": "uint64" },
+      { "internalType": "bytes32", "name": "driverCell", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "salt", "type": "bytes32" }
+    ],
+    "name": "acceptReveal",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [{ "internalType": "uint256", "name": "requestId", "type": "uint256" }],
+    "name": "requests",
+    "outputs": [
+      { "internalType": "address", "name": "rider", "type": "address" },
+      { "internalType": "bytes32", "name": "cellTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "regionTopic", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "paramsHash", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "pickupCommit", "type": "bytes32" },
+      { "internalType": "bytes32", "name": "dropoffCommit", "type": "bytes32" },
+      { "internalType": "uint256", "name": "riderDeposit", "type": "uint256" },
+      { "internalType": "uint64", "name": "createdAt", "type": "uint64" },
+      { "internalType": "uint64", "name": "commitEnd", "type": "uint64" },
+      { "internalType": "uint64", "name": "revealEnd", "type": "uint64" },
+      { "internalType": "uint64", "name": "ttl", "type": "uint64" },
+      { "internalType": "uint32", "name": "maxDriverEta", "type": "uint32" },
+      { "internalType": "uint32", "name": "commitCount", "type": "uint32" },
+      { "internalType": "bool", "name": "canceled", "type": "bool" },
+      { "internalType": "bool", "name": "matched", "type": "bool" },
+      { "internalType": "uint256", "name": "sessionId", "type": "uint256" }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      { "internalType": "uint256", "name": "sessionId", "type": "uint256" },
+      { "internalType": "uint32", "name": "msgIndex", "type": "uint32" },
+      { "internalType": "bytes", "name": "header", "type": "bytes" },
+      { "internalType": "bytes", "name": "ciphertext", "type": "bytes" }
+    ],
+    "name": "postEncryptedMessage",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

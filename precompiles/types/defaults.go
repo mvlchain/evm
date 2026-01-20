@@ -7,6 +7,7 @@ import (
 	evmaddress "github.com/cosmos/evm/encoding/address"
 	ibcutils "github.com/cosmos/evm/ibc"
 	cmn "github.com/cosmos/evm/precompiles/common"
+	ridehailprecompile "github.com/cosmos/evm/precompiles/ridehail"
 	erc20Keeper "github.com/cosmos/evm/x/erc20/keeper"
 	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
 	channelkeeper "github.com/cosmos/ibc-go/v10/modules/core/04-channel/keeper"
@@ -59,6 +60,9 @@ func WithConsensusAddrCodec(codec address.Codec) Option {
 }
 
 const bech32PrecompileBaseGas = 6_000
+const doubleRatchetPrecompileBaseGas = 6_000
+const keyRegistryPrecompileBaseGas = 6_000
+const rideHailPrecompileBaseGas = 6_000
 
 // DefaultStaticPrecompiles returns the list of all available static precompiled contracts from Cosmos EVM.
 //
@@ -73,6 +77,7 @@ func DefaultStaticPrecompiles(
 	clientKeeper ibcutils.ClientKeeper,
 	govKeeper govkeeper.Keeper,
 	slashingKeeper slashingkeeper.Keeper,
+	rideHailKeeper ridehailprecompile.RideHailKeeper,
 	codec codec.Codec,
 	opts ...Option,
 ) map[common.Address]vm.PrecompiledContract {
@@ -80,6 +85,9 @@ func DefaultStaticPrecompiles(
 		WithPraguePrecompiles().
 		WithP256Precompile().
 		WithBech32Precompile().
+		WithDoubleRatchetPrecompile().
+		WithKeyRegistryPrecompile().
+		WithRideHailPrecompile(rideHailKeeper).
 		WithStakingPrecompile(stakingKeeper, bankKeeper, opts...).
 		WithDistributionPrecompile(distributionKeeper, stakingKeeper, bankKeeper, opts...).
 		WithICS02Precompile(codec, clientKeeper).

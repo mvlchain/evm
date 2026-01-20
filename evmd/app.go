@@ -31,6 +31,9 @@ import (
 	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
 	erc20types "github.com/cosmos/evm/x/erc20/types"
 	erc20v2 "github.com/cosmos/evm/x/erc20/v2"
+	"github.com/cosmos/evm/x/ridehail"
+	ridehailkeeper "github.com/cosmos/evm/x/ridehail/keeper"
+	ridehailtypes "github.com/cosmos/evm/x/ridehail/types"
 	"github.com/cosmos/evm/x/feemarket"
 	feemarketkeeper "github.com/cosmos/evm/x/feemarket/keeper"
 	feemarkettypes "github.com/cosmos/evm/x/feemarket/types"
@@ -185,6 +188,7 @@ type EVMD struct {
 	FeeMarketKeeper   feemarketkeeper.Keeper
 	EVMKeeper         *evmkeeper.Keeper
 	Erc20Keeper       erc20keeper.Keeper
+	RideHailKeeper    ridehailkeeper.Keeper
 	PreciseBankKeeper precisebankkeeper.Keeper
 	EVMMempool        *evmmempool.ExperimentalEVMMempool
 
@@ -237,7 +241,7 @@ func NewExampleApp(
 		// ibc keys
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
 		// Cosmos EVM store keys
-		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey,
+		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, ridehailtypes.StoreKey, precisebanktypes.StoreKey,
 	)
 	oKeys := storetypes.NewObjectStoreKeys(banktypes.ObjectStoreKey, evmtypes.ObjectKey)
 
@@ -449,6 +453,12 @@ func NewExampleApp(
 	// Set up EVM keeper
 	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
 
+	// Create RideHail keeper before EVM keeper (needed for precompile registration)
+	app.RideHailKeeper = ridehailkeeper.NewKeeper(
+		appCodec,
+		keys[ridehailtypes.StoreKey],
+	)
+
 	// NOTE: it's required to set up the EVM keeper before the ERC-20 keeper, because it is used in its instantiation.
 	app.EVMKeeper = evmkeeper.NewKeeper(
 		// TODO: check why this is not adjusted to use the runtime module methods like SDK native keepers
@@ -473,6 +483,7 @@ func NewExampleApp(
 			app.IBCKeeper.ClientKeeper,
 			app.GovKeeper,
 			app.SlashingKeeper,
+			&app.RideHailKeeper,
 			appCodec,
 		),
 	)
@@ -583,6 +594,7 @@ func NewExampleApp(
 		vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, app.AccountKeeper.AddressCodec()),
 		feemarket.NewAppModule(app.FeeMarketKeeper),
 		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
+		ridehail.NewAppModule(app.RideHailKeeper),
 		precisebank.NewAppModule(app.PreciseBankKeeper, app.BankKeeper, app.AccountKeeper),
 	)
 
@@ -622,7 +634,7 @@ func NewExampleApp(
 		ibcexported.ModuleName, ibctransfertypes.ModuleName,
 
 		// Cosmos EVM BeginBlockers
-		erc20types.ModuleName, feemarkettypes.ModuleName,
+		erc20types.ModuleName, ridehailtypes.ModuleName, feemarkettypes.ModuleName,
 		evmtypes.ModuleName, // NOTE: EVM BeginBlocker must come after FeeMarket BeginBlocker
 
 		// TODO: remove no-ops? check if all are no-ops before removing
@@ -644,7 +656,7 @@ func NewExampleApp(
 		authtypes.ModuleName,
 
 		// Cosmos EVM EndBlockers
-		evmtypes.ModuleName, erc20types.ModuleName, feemarkettypes.ModuleName,
+		evmtypes.ModuleName, erc20types.ModuleName, ridehailtypes.ModuleName, feemarkettypes.ModuleName,
 
 		// no-ops
 		ibcexported.ModuleName, ibctransfertypes.ModuleName,
@@ -672,6 +684,7 @@ func NewExampleApp(
 		evmtypes.ModuleName,
 		feemarkettypes.ModuleName,
 		erc20types.ModuleName,
+		ridehailtypes.ModuleName,
 		precisebanktypes.ModuleName,
 
 		ibctransfertypes.ModuleName,

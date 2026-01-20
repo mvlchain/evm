@@ -1,0 +1,22 @@
+[
+  {
+    "inputs": [
+      { "internalType": "bytes", "name": "header", "type": "bytes" },
+      { "internalType": "bytes", "name": "ciphertext", "type": "bytes" },
+      { "internalType": "uint32", "name": "maxHeaderBytes", "type": "uint32" },
+      { "internalType": "uint32", "name": "maxCiphertextBytes", "type": "uint32" }
+    ],
+    "name": "validateEnvelope",
+    "outputs": [
+      { "internalType": "bool", "name": "valid", "type": "bool" },
+      { "internalType": "bytes32", "name": "envelopeHash", "type": "bytes32" },
+      { "internalType": "uint8", "name": "version", "type": "uint8" },
+      { "internalType": "bytes32", "name": "dhPub", "type": "bytes32" },
+      { "internalType": "uint32", "name": "pn", "type": "uint32" },
+      { "internalType": "uint32", "name": "n", "type": "uint32" },
+      { "internalType": "bytes32", "name": "adHash", "type": "bytes32" }
+    ],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  }
+]

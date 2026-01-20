@@ -50,6 +50,10 @@ func (k *Keeper) GetStaticPrecompileInstance(params *types.Params, address commo
 // EVM keeper's available precompiles map.
 // This function assumes that the Berlin precompiles cannot be disabled.
 func (k Keeper) IsAvailableStaticPrecompile(params *types.Params, address common.Address) bool {
-	return slices.Contains(params.ActiveStaticPrecompiles, address.String()) ||
-		slices.Contains(vm.PrecompiledAddressesPrague, address)
+	for _, precompile := range params.ActiveStaticPrecompiles {
+		if common.HexToAddress(precompile) == address {
+			return true
+		}
+	}
+	return slices.Contains(vm.PrecompiledAddressesPrague, address)
 }
