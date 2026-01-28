@@ -40,6 +40,7 @@ type EVMKeeper interface {
 		sponsorshipID string,
 		gasUsed uint64,
 	) error
+	SetTransientSponsor(ctx sdk.Context, sponsor common.Address)
 }
 
 // FeeMarketKeeper exposes the required feemarket keeper interface required for ante handlers

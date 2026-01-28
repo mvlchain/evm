@@ -77,6 +77,24 @@ func (_m *VMKeeper) GetAccount(ctx types.Context, addr common.Address) *statedb.
 	return r0
 }
 
+// HasActiveSponsorshipFor provides a mock function with given fields: ctx, beneficiary
+func (_m *VMKeeper) HasActiveSponsorshipFor(ctx types.Context, beneficiary common.Address) bool {
+	ret := _m.Called(ctx, beneficiary)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HasActiveSponsorshipFor")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func(types.Context, common.Address) bool); ok {
+		r0 = rf(ctx, beneficiary)
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
 // GetBaseFee provides a mock function with given fields: ctx
 func (_m *VMKeeper) GetBaseFee(ctx types.Context) *big.Int {
 	ret := _m.Called(ctx)

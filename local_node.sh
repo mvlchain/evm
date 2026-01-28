@@ -12,7 +12,7 @@ LOGLEVEL="info"
 # Set dedicated home directory for the evmd instance
 CHAINDIR="$HOME/.evmd"
 
-BASEFEE=10000000
+BASEFEE=100000000
 
 # Path variables
 CONFIG_TOML=$CHAINDIR/config/config.toml
@@ -342,8 +342,8 @@ fi
 evmd start "$TRACE" \
 	--pruning nothing \
 	--log_level $LOGLEVEL \
-	--minimum-gas-prices=0atest \
-	--evm.min-tip=0 \
+	--minimum-gas-prices=${BASEFEE}atest \
+	--evm.min-tip=1 \
 	--home "$CHAINDIR" \
 	--json-rpc.api eth,txpool,personal,net,debug,web3 \
 	--chain-id "$CHAINID"

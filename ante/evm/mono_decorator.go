@@ -272,6 +272,10 @@ func (md MonoDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, ne
 		sponsorAddr := common.HexToAddress(sponsorship.Sponsor)
 		feePayerAddr = sponsorAddr.Bytes()
 
+		// Store sponsor in transient storage so RefundGas sends leftover gas
+		// back to the sponsor instead of the beneficiary (msg.From).
+		md.evmKeeper.SetTransientSponsor(ctx, sponsorAddr)
+
 		// Track sponsorship usage
 		_ = md.evmKeeper.UseSponsorshipForTransaction(ctx, sponsorship.SponsorshipId, gas)
 	} else {

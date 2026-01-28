@@ -256,6 +256,11 @@ type LegacyPool struct {
 	changesSinceReorg int // A counter for how many drops we've performed in-between reorg.
 
 	BroadcastTxFn func(txs []*types.Transaction) error
+
+	// IsSponsoredTx is an optional callback that checks if a transaction sender
+	// has an active fee sponsorship. When set and returning true, the mempool
+	// skips balance verification for gas costs, as the sponsor will pay.
+	IsSponsoredTx func(sender common.Address) bool
 }
 
 type txpoolResetRequest struct {
@@ -582,6 +587,16 @@ func (pool *LegacyPool) ValidateTxBasics(tx *types.Transaction) error {
 // validateTx checks whether a transaction is valid according to the consensus
 // rules and adheres to some heuristic limits of the local node (price and size).
 func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
+	// Check if this transaction's sender has an active fee sponsorship.
+	// If so, skip the balance check since the sponsor pays gas costs.
+	skipBalance := false
+	if pool.IsSponsoredTx != nil {
+		from, err := types.Sender(pool.signer, tx)
+		if err == nil {
+			skipBalance = pool.IsSponsoredTx(from)
+		}
+	}
+
 	opts := &txpool.ValidationOptionsWithState{
 		State: pool.currentState,
 
@@ -601,6 +616,7 @@ func (pool *LegacyPool) validateTx(tx *types.Transaction) error {
 			}
 			return nil
 		},
+		SkipBalanceCheck: skipBalance,
 	}
 	if err := txpool.ValidateTransactionWithState(tx, pool.signer, opts); err != nil {
 		return err
@@ -1401,13 +1417,17 @@ func (pool *LegacyPool) promoteExecutables(accounts []common.Address) []*types.T
 			pool.all.Remove(tx.Hash())
 		}
 		log.Trace("Removed old queued transactions", "count", len(forwards))
-		// Drop all transactions that are too costly (low balance or out of gas)
-		drops, _ := list.Filter(pool.currentState.GetBalance(addr), gasLimit)
-		for _, tx := range drops {
-			pool.all.Remove(tx.Hash())
+		// Drop all transactions that are too costly (low balance or out of gas),
+		// but skip balance filtering for sponsored accounts since the sponsor pays.
+		var drops types.Transactions
+		if pool.IsSponsoredTx == nil || !pool.IsSponsoredTx(addr) {
+			drops, _ = list.Filter(pool.currentState.GetBalance(addr), gasLimit)
+			for _, tx := range drops {
+				pool.all.Remove(tx.Hash())
+			}
+			log.Trace("Removed unpayable queued transactions", "count", len(drops))
+			queuedNofundsMeter.Mark(int64(len(drops)))
 		}
-		log.Trace("Removed unpayable queued transactions", "count", len(drops))
-		queuedNofundsMeter.Mark(int64(len(drops)))
 
 		// Gather all executable transactions and promote them
 		readies := list.Ready(pool.pendingNonces.get(addr))
@@ -1589,21 +1609,25 @@ func (pool *LegacyPool) demoteUnexecutables() {
 			pool.all.Remove(hash)
 			log.Trace("Removed old pending transaction", "hash", hash)
 		}
-		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later
-		drops, invalids := list.Filter(pool.currentState.GetBalance(addr), gasLimit)
-		for _, tx := range drops {
-			hash := tx.Hash()
-			pool.all.Remove(hash)
-			log.Trace("Removed unpayable pending transaction", "hash", hash)
-		}
-		pendingNofundsMeter.Mark(int64(len(drops)))
+		// Drop all transactions that are too costly (low balance or out of gas), and queue any invalids back for later.
+		// Skip balance filtering for sponsored accounts since the sponsor pays gas fees.
+		var drops, invalids types.Transactions
+		if pool.IsSponsoredTx == nil || !pool.IsSponsoredTx(addr) {
+			drops, invalids = list.Filter(pool.currentState.GetBalance(addr), gasLimit)
+			for _, tx := range drops {
+				hash := tx.Hash()
+				pool.all.Remove(hash)
+				log.Trace("Removed unpayable pending transaction", "hash", hash)
+			}
+			pendingNofundsMeter.Mark(int64(len(drops)))
 
-		for _, tx := range invalids {
-			hash := tx.Hash()
-			log.Trace("Demoting pending transaction", "hash", hash)
+			for _, tx := range invalids {
+				hash := tx.Hash()
+				log.Trace("Demoting pending transaction", "hash", hash)
 
-			// Internal shuffle shouldn't touch the lookup set.
-			pool.enqueueTx(hash, tx, false)
+				// Internal shuffle shouldn't touch the lookup set.
+				pool.enqueueTx(hash, tx, false)
+			}
 		}
 		pendingGauge.Dec(int64(len(olds) + len(drops) + len(invalids)))
 

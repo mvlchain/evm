@@ -196,6 +196,18 @@ func NewExperimentalEVMMempool(
 		legacyPool.BroadcastTxFn = evmMempool.defaultBroadcastTxFn
 	}
 
+	// Set up fee sponsorship check so the mempool skips balance verification
+	// for beneficiaries that have an active sponsorship. The full sponsorship
+	// validation (budget, gas limits, expiration, etc.) is performed by the
+	// ante handler; this is a lightweight existence check only.
+	legacyPool.IsSponsoredTx = func(sender common.Address) bool {
+		ctx, err := blockchain.GetLatestContext()
+		if err != nil {
+			return false
+		}
+		return vmKeeper.HasActiveSponsorshipFor(ctx, sender)
+	}
+
 	vmKeeper.SetEvmMempool(evmMempool)
 
 	return evmMempool

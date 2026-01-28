@@ -435,6 +435,26 @@ func (k Keeper) AddTransientGasUsed(ctx sdk.Context, gasUsed uint64) (uint64, er
 	return result, nil
 }
 
+// SetTransientSponsor stores the sponsor address for the current transaction
+// in the object store (transient, reset each block). This is set by the ante
+// handler when a sponsored transaction is detected, so that RefundGas can
+// redirect the gas refund to the sponsor instead of the tx sender.
+func (k Keeper) SetTransientSponsor(ctx sdk.Context, sponsor common.Address) {
+	store := ctx.ObjectStore(k.objectKey)
+	store.Set(types.ObjectSponsorKey(ctx.TxIndex()), sponsor)
+}
+
+// GetTransientSponsor returns the sponsor address stored for the current
+// transaction, or the zero address if no sponsorship was recorded.
+func (k Keeper) GetTransientSponsor(ctx sdk.Context) (common.Address, bool) {
+	store := ctx.ObjectStore(k.objectKey)
+	v := store.Get(types.ObjectSponsorKey(ctx.TxIndex()))
+	if v == nil {
+		return common.Address{}, false
+	}
+	return v.(common.Address), true
+}
+
 // KVStoreKeys returns KVStore keys injected to keeper
 func (k Keeper) KVStoreKeys() map[string]storetypes.StoreKey {
 	return k.storeKeys

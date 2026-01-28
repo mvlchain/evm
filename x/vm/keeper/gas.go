@@ -40,6 +40,9 @@ func (k *Keeper) GetEthIntrinsicGas(ctx sdk.Context, msg core.Message, cfg *para
 // consumed in the transaction. Additionally, the function sets the total gas consumed to the value
 // returned by the EVM execution, thus ignoring the previous intrinsic gas consumed during in the
 // AnteHandler.
+//
+// For sponsored transactions, the refund is directed to the sponsor (who paid
+// the fees upfront) instead of msg.From (the beneficiary).
 func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64, denom string) (err error) {
 	ctx, span := ctx.StartSpan(tracer, "RefundGas", trace.WithAttributes(attribute.Int64("leftover_gas", int64(leftoverGas)))) //nolint:gosec // G115
 	defer func() { evmtrace.EndSpanErr(span, err) }()
@@ -55,12 +58,19 @@ func (k *Keeper) RefundGas(ctx sdk.Context, msg core.Message, leftoverGas uint64
 		// positive amount refund
 		refundedCoins := sdk.Coins{sdk.NewCoin(denom, sdkmath.NewIntFromBigInt(remaining))}
 
-		// refund to sender from the fee collector module account, which is the escrow account in charge of collecting tx fees
+		// Determine refund recipient: sponsor if this is a sponsored tx,
+		// otherwise the original sender.
+		refundAddr := msg.From.Bytes()
+		if sponsor, ok := k.GetTransientSponsor(ctx); ok {
+			refundAddr = sponsor.Bytes()
+		}
+
+		// refund from the fee collector module account, which is the escrow account in charge of collecting tx fees
 		var err error
 		if k.virtualFeeCollection {
-			err = k.bankWrapper.SendCoinsFromModuleToAccountVirtual(ctx, authtypes.FeeCollectorName, msg.From.Bytes(), refundedCoins)
+			err = k.bankWrapper.SendCoinsFromModuleToAccountVirtual(ctx, authtypes.FeeCollectorName, refundAddr, refundedCoins)
 		} else {
-			err = k.bankWrapper.SendCoinsFromModuleToAccount(ctx, authtypes.FeeCollectorName, msg.From.Bytes(), refundedCoins)
+			err = k.bankWrapper.SendCoinsFromModuleToAccount(ctx, authtypes.FeeCollectorName, refundAddr, refundedCoins)
 		}
 		if err != nil {
 			err = errorsmod.Wrapf(errortypes.ErrInsufficientFunds, "fee collector account failed to refund fees: %s", err.Error())

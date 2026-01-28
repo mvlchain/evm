@@ -86,6 +86,8 @@ func (k *ExtendedEVMKeeper) UseSponsorshipForTransaction(
 	return nil
 }
 
+func (k *ExtendedEVMKeeper) SetTransientSponsor(_ sdk.Context, _ common.Address) {}
+
 // only methods called by EVMMonoDecorator
 type MockFeeMarketKeeper struct{}
 

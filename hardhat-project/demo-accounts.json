@@ -3,9 +3,9 @@
     "address": "0x00000Be6819f41400225702D32d3dd23663Dd690"
   },
   "beneficiary": {
-    "address": "0x64C24E738487ba4eA38B3568Dfcc5867B141290d",
-    "privateKey": "0xe659e2c4cc9347c30e1293917ee3578793aae8e628d997cba1bfda9e5c17d980"
+    "address": "0x8a1B1C274a4609a4ca10Afe8B44D924855e094AF",
+    "privateKey": "0xbfc2d69c9136cc8548dd0ff535834a817698a5d647ec4b81624e2229b8508548"
   },
-  "sponsorshipId": "0x3b331d71c9c685485f64822ee369accca604007addde960812ac183d82e2e903",
-  "counterAddress": "0x5C019eaA6F0c6219305Ee76bc1402028c4ee9cAA"
+  "sponsorshipId": "0x82fd8201772e14877bacefb2ad9c7f1b889c4a9d2d56fd9a5d3185c59a053475",
+  "counterAddress": "0x03c50BE9800e9688767968493CB719a164A0A923"
 }

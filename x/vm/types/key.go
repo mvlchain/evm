@@ -36,6 +36,8 @@ const (
 const (
 	prefixObjectBloom = iota + 1
 	prefixObjectGasUsed
+	prefixObjectSponsor
+	prefixObjectSponsorshipID
 )
 
 // KVStore key prefixes
@@ -66,6 +68,16 @@ func StateKey(address common.Address, key []byte) []byte {
 func ObjectGasUsedKey(txIndex int) []byte {
 	var key [1 + 8]byte
 	key[0] = prefixObjectGasUsed
+	binary.BigEndian.PutUint64(key[1:], uint64(txIndex)) //nolint:gosec
+	return key[:]
+}
+
+// ObjectSponsorKey returns the object store key for the sponsor address of a
+// sponsored transaction. Keyed by tx index so each tx in a block can have its
+// own sponsor.
+func ObjectSponsorKey(txIndex int) []byte {
+	var key [1 + 8]byte
+	key[0] = prefixObjectSponsor
 	binary.BigEndian.PutUint64(key[1:], uint64(txIndex)) //nolint:gosec
 	return key[:]
 }

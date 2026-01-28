@@ -254,6 +254,28 @@ func (k *Keeper) GetSponsorship(ctx sdk.Context, sponsorshipID string) (*types.F
 }
 
 // GetSponsorshipsForBeneficiary retrieves all sponsorships for a beneficiary
+// HasActiveSponsorshipFor checks if the given beneficiary has any active
+// fee sponsorship. This is a lightweight check used by the mempool to
+// determine whether to skip balance verification for a transaction sender.
+func (k *Keeper) HasActiveSponsorshipFor(ctx sdk.Context, beneficiary common.Address) bool {
+	sponsorshipIDs := k.getSponsorshipIDsForBeneficiary(ctx, beneficiary)
+	if len(sponsorshipIDs) == 0 {
+		return false
+	}
+	currentHeight := ctx.BlockHeight()
+	for _, id := range sponsorshipIDs {
+		sponsorship := k.getSponsorshipFromStore(ctx, id)
+		if sponsorship == nil {
+			continue
+		}
+		// Quick check: is the sponsorship active and not expired?
+		if sponsorship.IsActive && (sponsorship.ExpirationHeight == 0 || sponsorship.ExpirationHeight > currentHeight) {
+			return true
+		}
+	}
+	return false
+}
+
 func (k *Keeper) GetSponsorshipsForBeneficiary(ctx sdk.Context, beneficiary common.Address) []*types.FeeSponsor {
 	sponsorshipIDs := k.getSponsorshipIDsForBeneficiary(ctx, beneficiary)
 	sponsorships := make([]*types.FeeSponsor, 0, len(sponsorshipIDs))
@@ -357,10 +379,15 @@ func (k *Keeper) isSponsorshipValid(
 			}
 		}
 
-		// Check daily limit
+		// Check daily limit — compare accumulated usage so far against the cap.
+		// We intentionally do NOT add gasLimit here because the gas limit is
+		// a worst-case estimate set by the client and can be much larger than
+		// the actual gas consumed. The per-tx cap is already enforced by
+		// maxGasPerTx above. Actual usage is tracked post-execution via
+		// UseSponsorshipForTransaction.
 		if sponsorship.Conditions.DailyGasLimit > 0 {
 			dailyUsage := k.getDailyUsage(ctx, sponsorship.SponsorshipId)
-			if dailyUsage+gasLimit > sponsorship.Conditions.DailyGasLimit {
+			if dailyUsage >= sponsorship.Conditions.DailyGasLimit {
 				return false
 			}
 		}

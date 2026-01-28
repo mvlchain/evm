@@ -30,6 +30,10 @@ type VMKeeperI interface {
 	DeleteAccount(ctx sdk.Context, addr common.Address) error
 	KVStoreKeys() map[string]storetypes.StoreKey
 	SetEvmMempool(evmMempool *ExperimentalEVMMempool)
+	// HasActiveSponsorshipFor checks if the given beneficiary has any active
+	// fee sponsorship. Used by the mempool to skip balance checks for sponsored
+	// transactions.
+	HasActiveSponsorshipFor(ctx sdk.Context, beneficiary common.Address) bool
 }
 
 type FeeMarketKeeperI interface {

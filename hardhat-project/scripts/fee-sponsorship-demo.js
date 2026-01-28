@@ -247,31 +247,62 @@ async function main() {
   // =============================================================================
   logStep(5, 6, "Executing gasless transactions as beneficiary...");
 
-  const beneficiaryBalanceBefore = await ethers.provider.getBalance(beneficiary.address);
-  const sponsorBalanceBefore = await ethers.provider.getBalance(sponsor.address);
+  let beneficiaryBalanceBefore = await ethers.provider.getBalance(beneficiary.address);
+  let sponsorBalanceBefore = await ethers.provider.getBalance(sponsor.address);
 
-  logInfo(`Beneficiary balance before: ${ethers.formatEther(beneficiaryBalanceBefore)} ETH`);
+  logInfo(`Beneficiary balance before: ${ethers.formatEther(beneficiaryBalanceBefore)} ETH (${beneficiaryBalanceBefore.toString()} wei)`);
   logInfo(`Sponsor balance before: ${ethers.formatEther(sponsorBalanceBefore)} ETH`);
   console.log();
 
   // Connect contract to beneficiary wallet
   const counterAsBeneficiary = counter.connect(beneficiary);
 
+  // Explicit gas fee overrides — the chain returns gasPrice=0 from eth_gasPrice,
+  // but requires --evm.min-tip=1.  Without these overrides ethers.js would send
+  // maxPriorityFeePerGas=0 and the tx would never be selected by the block
+  // proposer (Pending() filters out txs below minTip).
+  const gasOverrides = {
+    maxFeePerGas: 100000000n,   // 0.1 gwei — matches --minimum-gas-prices
+    maxPriorityFeePerGas: 1n,   // matches --evm.min-tip=1
+  };
+
   const transactions = [];
+  const balanceLog = [];
+
+  // Helper: execute a sponsored tx and log balance changes
+  async function executeSponsoredTx(label, txPromise) {
+    log(`   ${label}...`, colors.blue);
+    const bBefore = await ethers.provider.getBalance(beneficiary.address);
+    const sBefore = await ethers.provider.getBalance(sponsor.address);
+
+    const tx = await txPromise();
+    const receipt = await tx.wait();
+
+    const bAfter = await ethers.provider.getBalance(beneficiary.address);
+    const sAfter = await ethers.provider.getBalance(sponsor.address);
+
+    const bDiff = bAfter - bBefore;
+    const sDiff = sAfter - sBefore;
+
+    logSuccess(`${label} successful!`);
+    logInfo(`   TX Hash: ${receipt.hash}`);
+    logInfo(`   Gas used: ${receipt.gasUsed.toString()}`);
+
+    transactions.push({ name: label, gasUsed: receipt.gasUsed });
+    balanceLog.push({
+      name: label,
+      gasUsed: receipt.gasUsed,
+      beneficiary: { before: bBefore, after: bAfter, diff: bDiff },
+      sponsor: { before: sBefore, after: sAfter, diff: sDiff },
+    });
+    console.log();
+  }
 
   // Transaction 1: Increment
-  log("   Transaction 1: Incrementing counter...", colors.blue);
   try {
-    const tx1 = await counterAsBeneficiary.increment();
-    const receipt1 = await tx1.wait();
-    logSuccess("Transaction 1 successful!");
-    logInfo(`   TX Hash: ${receipt1.hash}`);
-    logInfo(`   Gas used: ${receipt1.gasUsed.toString()}`);
-
+    await executeSponsoredTx("Transaction 1: Increment", () => counterAsBeneficiary.increment(gasOverrides));
     const count1 = await counter.getCount();
     logInfo(`   Counter value: ${count1.toString()}`);
-    transactions.push({ name: "Increment", gasUsed: receipt1.gasUsed });
-    console.log();
   } catch (error) {
     logError(`Transaction 1 failed: ${error.message}`);
   }
@@ -279,18 +310,10 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 1000));
 
   // Transaction 2: Increment again
-  log("   Transaction 2: Incrementing counter again...", colors.blue);
   try {
-    const tx2 = await counterAsBeneficiary.increment();
-    const receipt2 = await tx2.wait();
-    logSuccess("Transaction 2 successful!");
-    logInfo(`   TX Hash: ${receipt2.hash}`);
-    logInfo(`   Gas used: ${receipt2.gasUsed.toString()}`);
-
+    await executeSponsoredTx("Transaction 2: Increment", () => counterAsBeneficiary.increment(gasOverrides));
     const count2 = await counter.getCount();
     logInfo(`   Counter value: ${count2.toString()}`);
-    transactions.push({ name: "Increment", gasUsed: receipt2.gasUsed });
-    console.log();
   } catch (error) {
     logError(`Transaction 2 failed: ${error.message}`);
   }
@@ -298,18 +321,10 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 1000));
 
   // Transaction 3: Decrement
-  log("   Transaction 3: Decrementing counter...", colors.blue);
   try {
-    const tx3 = await counterAsBeneficiary.decrement();
-    const receipt3 = await tx3.wait();
-    logSuccess("Transaction 3 successful!");
-    logInfo(`   TX Hash: ${receipt3.hash}`);
-    logInfo(`   Gas used: ${receipt3.gasUsed.toString()}`);
-
+    await executeSponsoredTx("Transaction 3: Decrement", () => counterAsBeneficiary.decrement(gasOverrides));
     const count3 = await counter.getCount();
     logInfo(`   Counter value: ${count3.toString()}`);
-    transactions.push({ name: "Decrement", gasUsed: receipt3.gasUsed });
-    console.log();
   } catch (error) {
     logError(`Transaction 3 failed: ${error.message}`);
   }
@@ -317,18 +332,10 @@ async function main() {
   await new Promise(resolve => setTimeout(resolve, 1000));
 
   // Transaction 4: Reset
-  log("   Transaction 4: Resetting counter...", colors.blue);
   try {
-    const tx4 = await counterAsBeneficiary.reset();
-    const receipt4 = await tx4.wait();
-    logSuccess("Transaction 4 successful!");
-    logInfo(`   TX Hash: ${receipt4.hash}`);
-    logInfo(`   Gas used: ${receipt4.gasUsed.toString()}`);
-
+    await executeSponsoredTx("Transaction 4: Reset", () => counterAsBeneficiary.reset(gasOverrides));
     const count4 = await counter.getCount();
     logInfo(`   Counter value: ${count4.toString()}`);
-    transactions.push({ name: "Reset", gasUsed: receipt4.gasUsed });
-    console.log();
   } catch (error) {
     logError(`Transaction 4 failed: ${error.message}`);
   }
@@ -337,12 +344,47 @@ async function main() {
   const beneficiaryBalanceAfter = await ethers.provider.getBalance(beneficiary.address);
   const sponsorBalanceAfter = await ethers.provider.getBalance(sponsor.address);
 
-  logSuccess("Final balances:");
-  logInfo(`   Beneficiary: ${ethers.formatEther(beneficiaryBalanceAfter)} ETH (still 0!)`);
-  logInfo(`   Sponsor: ${ethers.formatEther(sponsorBalanceAfter)} ETH`);
+  const totalGasUsed = transactions.reduce((sum, tx) => sum + BigInt(tx.gasUsed), 0n);
+
+  // =============================================================================
+  // Balance Change Log
+  // =============================================================================
+  console.log();
+  log("================================================", colors.yellow);
+  log("          Balance Change Log", colors.yellow);
+  log("================================================", colors.yellow);
   console.log();
 
-  const totalGasUsed = transactions.reduce((sum, tx) => sum + BigInt(tx.gasUsed), 0n);
+  log("Per-Transaction Breakdown:", colors.bright);
+  console.log();
+
+  for (const entry of balanceLog) {
+    log(`  ${entry.name}`, colors.blue);
+    log(`  Gas used: ${entry.gasUsed.toString()}`, colors.reset);
+    log(`  Sponsor:      ${ethers.formatEther(entry.sponsor.before)} -> ${ethers.formatEther(entry.sponsor.after)} ETH  (${entry.sponsor.diff >= 0n ? "+" : ""}${entry.sponsor.diff.toString()} wei)`, colors.reset);
+    log(`  Beneficiary:  ${ethers.formatEther(entry.beneficiary.before)} -> ${ethers.formatEther(entry.beneficiary.after)} ETH  (${entry.beneficiary.diff >= 0n ? "+" : ""}${entry.beneficiary.diff.toString()} wei)`, colors.reset);
+    console.log();
+  }
+
+  log("------------------------------------------------", colors.yellow);
+  log("  Overall Summary:", colors.bright);
+  log(`  Sponsor:      ${ethers.formatEther(sponsorBalanceBefore)} -> ${ethers.formatEther(sponsorBalanceAfter)} ETH`, colors.reset);
+  log(`                Change: ${(sponsorBalanceAfter - sponsorBalanceBefore).toString()} wei`, colors.reset);
+  log(`  Beneficiary:  ${ethers.formatEther(beneficiaryBalanceBefore)} -> ${ethers.formatEther(beneficiaryBalanceAfter)} ETH`, colors.reset);
+  log(`                Change: +${(beneficiaryBalanceAfter - beneficiaryBalanceBefore).toString()} wei`, colors.reset);
+  log(`  Total gas used: ${totalGasUsed.toString()}`, colors.reset);
+  log("------------------------------------------------", colors.yellow);
+  console.log();
+
+  if (beneficiaryBalanceAfter > beneficiaryBalanceBefore) {
+    log("  NOTE: Beneficiary balance INCREASED. This is because the EVM gas", colors.yellow);
+    log("  refund (leftover gas) is sent to msg.From (beneficiary) rather than", colors.yellow);
+    log("  the sponsor. The sponsor pays gasLimit*gasPrice upfront, but the", colors.yellow);
+    log("  refund of (gasLimit - gasUsed)*gasPrice goes to the beneficiary.", colors.yellow);
+    log("  This is a known issue to fix in RefundGas for sponsored txs.", colors.yellow);
+    console.log();
+  }
+
   logSuccess(`Total gas consumed: ${totalGasUsed.toString()}`);
   console.log();
 
@@ -377,7 +419,7 @@ async function main() {
   logInfo(`• Beneficiary executed ${transactions.length} transactions with 0 balance`);
   logInfo("• Sponsor paid all gas fees automatically");
   logInfo(`• Total gas consumed: ${totalGasUsed.toString()}`);
-  logInfo(`• Beneficiary balance: Still ${ethers.formatEther(beneficiaryBalanceAfter)} ETH!`);
+  logInfo(`• Beneficiary balance: ${ethers.formatEther(beneficiaryBalanceAfter)} ETH (gained gas refunds)`);
   console.log();
 
   log("Account Details:", colors.blue);

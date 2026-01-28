@@ -383,8 +383,12 @@ func (k Keeper) EstimateGasInternal(c context.Context, req *types.EthCallRequest
 	// convert the tx args to an ethereum message
 	msg := args.ToMessage(cfg.BaseFee, true, true)
 
+	// Check if the sender has an active fee sponsorship. If so, skip the
+	// balance-based gas cap since the sponsor will pay gas costs.
+	isSponsored := k.HasActiveSponsorshipFor(ctx, args.GetFrom())
+
 	// Recap the highest gas limit with account's available balance.
-	if msg.GasFeeCap.BitLen() != 0 {
+	if !isSponsored && msg.GasFeeCap.BitLen() != 0 {
 		baseDenom := types.GetEVMCoinDenom()
 
 		balance := k.bankWrapper.SpendableCoin(ctx, sdk.AccAddress(args.From.Bytes()), baseDenom)
