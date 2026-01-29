@@ -257,12 +257,17 @@ async function main() {
   // Connect contract to beneficiary wallet
   const counterAsBeneficiary = counter.connect(beneficiary);
 
-  // Explicit gas fee overrides — the chain returns gasPrice=0 from eth_gasPrice,
-  // but requires --evm.min-tip=1.  Without these overrides ethers.js would send
-  // maxPriorityFeePerGas=0 and the tx would never be selected by the block
-  // proposer (Pending() filters out txs below minTip).
+  // Fetch current fee data to ensure we meet the base fee requirement
+  const feeData = await ethers.provider.getFeeData();
+  const baseFee = feeData.maxFeePerGas || 100000000n;
+  // Add 20% buffer to handle base fee increases between blocks
+  const maxFeePerGas = baseFee + (baseFee / 5n);
+
+  logInfo(`Current base fee: ${ethers.formatUnits(baseFee, "gwei")} gwei`);
+  logInfo(`Using maxFeePerGas: ${ethers.formatUnits(maxFeePerGas, "gwei")} gwei`);
+
   const gasOverrides = {
-    maxFeePerGas: 100000000n,   // 0.1 gwei — matches --minimum-gas-prices
+    maxFeePerGas: maxFeePerGas,
     maxPriorityFeePerGas: 1n,   // matches --evm.min-tip=1
   };
 

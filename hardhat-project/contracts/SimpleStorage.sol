@@ -6,7 +6,7 @@ contract SimpleStorage {
 
     event ValueChanged(uint256 newValue);
 
-    function store(uint256 newValue) public {
+    function store(uint256 newValue) public payable {
         value = newValue;
         emit ValueChanged(newValue);
     }
