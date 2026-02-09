@@ -307,7 +307,7 @@ func GetDefaultAPINamespaces() []string {
 
 // GetAPINamespaces returns the all the available JSON-RPC API namespaces.
 func GetAPINamespaces() []string {
-	return []string{"web3", "eth", "personal", "net", "txpool", "debug", "miner"}
+	return []string{"web3", "eth", "personal", "net", "txpool", "debug", "miner", "mvl"}
 }
 
 // GetDefaultWSOrigins returns the default WebSocket origins.

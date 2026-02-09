@@ -1,0 +1,36 @@
+syntax = "proto3";
+
+package cosmos.auction.v1;
+
+import "cosmos/msg/v1/msg.proto";
+import "google/api/annotations.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/cosmos/evm/x/auction/types";
+
+// Msg defines the auction Msg service.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  rpc ConfirmAuction(MsgConfirmAuction) returns (MsgConfirmAuctionResponse) {
+    option (google.api.http).post = "/cosmos/auction/v1/confirm";
+  }
+}
+
+// MsgConfirmAuction confirms an auction result on-chain.
+message MsgConfirmAuction {
+  option (cosmos.msg.v1.signer) = "seller";
+  option (gogoproto.goproto_getters) = false;
+
+  string auction_id = 1;
+  string seller = 2;
+  string winner = 3;
+  string price = 4;
+  string denom = 5;
+  int64 end_height = 6;
+  string ask_sig = 7;
+  string bid_sig = 8;
+  string seller_sig = 9;
+}
+
+message MsgConfirmAuctionResponse {}

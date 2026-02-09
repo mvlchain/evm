@@ -1,0 +1,86 @@
+services:
+  evmd-node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    volumes:
+      - .:/app
+      - ./bin/evmd:/usr/local/bin/evmd:ro
+      - ./.multinode:/data
+    working_dir: /app
+    environment:
+      HOME: /data/node1
+      FORCE_INIT: ${FORCE_INIT:-0}
+    ports:
+      - "26657:26657"
+      - "1317:1317"
+      - "9090:9090"
+      - "8545:8545"
+      - "8546:8546"
+    command: ["bash", "-lc", "./scripts/multinode-entrypoint.sh node1"]
+
+  evmd-node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    depends_on:
+      - evmd-node1
+    volumes:
+      - .:/app
+      - ./bin/evmd:/usr/local/bin/evmd:ro
+      - ./.multinode:/data
+    working_dir: /app
+    environment:
+      HOME: /data/node2
+      FORCE_INIT: ${FORCE_INIT:-0}
+    ports:
+      - "26667:26657"
+      - "1318:1317"
+      - "9091:9090"
+      - "8547:8545"
+      - "8548:8546"
+    command: ["bash", "-lc", "./scripts/multinode-entrypoint.sh node2"]
+
+  evmd-node3:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    depends_on:
+      - evmd-node1
+    volumes:
+      - .:/app
+      - ./bin/evmd:/usr/local/bin/evmd:ro
+      - ./.multinode:/data
+    working_dir: /app
+    environment:
+      HOME: /data/node3
+      FORCE_INIT: ${FORCE_INIT:-0}
+    ports:
+      - "26677:26657"
+      - "1319:1317"
+      - "9092:9090"
+      - "8549:8545"
+      - "8550:8546"
+    command: ["bash", "-lc", "./scripts/multinode-entrypoint.sh node3"]
+
+  evmd-node4:
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
+    depends_on:
+      - evmd-node1
+    volumes:
+      - .:/app
+      - ./bin/evmd:/usr/local/bin/evmd:ro
+      - ./.multinode:/data
+    working_dir: /app
+    environment:
+      HOME: /data/node4
+      FORCE_INIT: ${FORCE_INIT:-0}
+    ports:
+      - "26687:26657"
+      - "1320:1317"
+      - "9093:9090"
+      - "8551:8545"
+      - "8552:8546"
+    command: ["bash", "-lc", "./scripts/multinode-entrypoint.sh node4"]

@@ -23,6 +23,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/pkg/errors"
 
+	"github.com/cosmos/evm/rpc/namespaces/custom/mvl"
 	rpcfilters "github.com/cosmos/evm/rpc/namespaces/ethereum/eth/filters"
 	"github.com/cosmos/evm/rpc/stream"
 	"github.com/cosmos/evm/server/config"
@@ -325,6 +326,40 @@ readLoop:
 				s.logger.Error("error writing subscription response", "error", err.Error())
 				break readLoop
 			}
+		case "mvl_subscribe":
+			params, ok := s.getParamsAndCheckValid(msg, wsConn)
+			if !ok {
+				continue
+			}
+
+			topic, ok := params[0].(string)
+			if !ok || topic == "" {
+				s.sendErrResponse(wsConn, "invalid topic")
+				continue
+			}
+
+			subID := rpc.NewID()
+			ctx, cancel := context.WithCancel(context.Background())
+			unsubFn, err := mvlSubscribeRedis(ctx, s.logger, wsConn, subID, topic)
+			if err != nil {
+				cancel()
+				s.sendErrResponse(wsConn, err.Error())
+				continue
+			}
+			subscriptions[subID] = func() {
+				cancel()
+				unsubFn()
+			}
+
+			res := &SubscriptionResponseJSON{
+				Jsonrpc: "2.0",
+				ID:      connID,
+				Result:  subID,
+			}
+			if err := wsConn.WriteJSON(res); err != nil {
+				s.logger.Error("error writing subscription response", "error", err.Error())
+				break readLoop
+			}
 		case "eth_unsubscribe":
 			params, ok := s.getParamsAndCheckValid(msg, wsConn)
 			if !ok {
@@ -354,6 +389,34 @@ readLoop:
 				s.logger.Error("error writing unsubscribe response", "error", err.Error())
 				break readLoop
 			}
+		case "mvl_unsubscribe":
+			params, ok := s.getParamsAndCheckValid(msg, wsConn)
+			if !ok {
+				continue
+			}
+
+			id, ok := params[0].(string)
+			if !ok {
+				s.sendErrResponse(wsConn, "invalid parameters")
+				continue
+			}
+
+			subID := rpc.ID(id)
+			unsubFn, ok := subscriptions[subID]
+			if ok {
+				delete(subscriptions, subID)
+				unsubFn()
+			}
+
+			res := &SubscriptionResponseJSON{
+				Jsonrpc: "2.0",
+				ID:      connID,
+				Result:  ok,
+			}
+			if err := wsConn.WriteJSON(res); err != nil {
+				s.logger.Error("error writing unsubscribe response", "error", err.Error())
+				break readLoop
+			}
 		default:
 			// otherwise, call the usual rpc server to respond
 			if err := s.tcpGetAndSendResponse(wsConn, mb); err != nil {
@@ -361,6 +424,32 @@ readLoop:
 			}
 		}
 	}
+}
+
+func mvlSubscribeRedis(ctx context.Context, logger log.Logger, wsConn *wsConn, subID rpc.ID, topic string) (func(), error) {
+	return mvl.SubscribeRedis(ctx, topic, func(payload string) {
+		var result any
+		if err := json.Unmarshal([]byte(payload), &result); err != nil {
+			result = payload
+		}
+
+		res := &SubscriptionNotification{
+			Jsonrpc: "2.0",
+			Method:  "mvl_subscription",
+			Params: &SubscriptionResult{
+				Subscription: subID,
+				Result:       result,
+			},
+		}
+		if err := wsConn.WriteJSON(res); err != nil {
+			logger.Error("error writing mvl subscription", "error", err.Error())
+			try(func() {
+				if err != websocket.ErrCloseSent {
+					_ = wsConn.Close()
+				}
+			}, logger, "closing websocket peer sub")
+		}
+	})
 }
 
 // tcpGetAndSendResponse sends error response to client if params is invalid

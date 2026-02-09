@@ -7,6 +7,7 @@ import (
 
 	evmmempool "github.com/cosmos/evm/mempool"
 	"github.com/cosmos/evm/rpc/backend"
+	"github.com/cosmos/evm/rpc/namespaces/custom/mvl"
 	"github.com/cosmos/evm/rpc/namespaces/ethereum/debug"
 	"github.com/cosmos/evm/rpc/namespaces/ethereum/eth"
 	"github.com/cosmos/evm/rpc/namespaces/ethereum/eth/filters"
@@ -37,6 +38,10 @@ const (
 	TxPoolNamespace   = "txpool"
 	DebugNamespace    = "debug"
 	MinerNamespace    = "miner"
+	// MVL namespace
+	MVLNamespace = "mvl"
+
+	// API version
 
 	apiVersion = "1.0"
 )
@@ -164,6 +169,17 @@ func init() {
 					Version:   apiVersion,
 					Service:   miner.NewPrivateAPI(ctx, evmBackend),
 					Public:    false,
+				},
+			}
+		},
+		// MVL namespace
+		MVLNamespace: func(_ *server.Context, clientCtx client.Context, _ *stream.RPCStream, _ bool, _ servertypes.EVMTxIndexer, _ *evmmempool.ExperimentalEVMMempool) []rpc.API {
+			return []rpc.API{
+				{
+					Namespace: MVLNamespace,
+					Version:   apiVersion,
+					Service:   mvl.NewPublicAPI(clientCtx),
+					Public:    true,
 				},
 			}
 		},

@@ -345,5 +345,8 @@ evmd start "$TRACE" \
 	--minimum-gas-prices=0atest \
 	--evm.min-tip=0 \
 	--home "$CHAINDIR" \
-	--json-rpc.api eth,txpool,personal,net,debug,web3 \
+	--rpc.laddr tcp://0.0.0.0:26657 \
+	--json-rpc.address 0.0.0.0:8545 \
+	--json-rpc.ws-address 0.0.0.0:8546 \
+	--json-rpc.api eth,txpool,personal,net,debug,web3,mvl \
 	--chain-id "$CHAINID"

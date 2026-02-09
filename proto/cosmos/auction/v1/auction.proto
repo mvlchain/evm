@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package cosmos.auction.v1;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/cosmos/evm/x/auction/types";
+
+// Auction stores the confirmed auction result on-chain.
+message Auction {
+  string auction_id = 1;
+  string seller = 2;
+  string winner = 3;
+  string price = 4;
+  string denom = 5;
+  int64 end_height = 6;
+  string ask_sig = 7;
+  string bid_sig = 8;
+  string seller_sig = 9;
+  int64 confirmed_height = 10;
+  string tx_hash = 11;
+
+  option (gogoproto.goproto_getters) = false;
+}

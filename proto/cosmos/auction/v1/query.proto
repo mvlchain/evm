@@ -1,0 +1,38 @@
+syntax = "proto3";
+
+package cosmos.auction.v1;
+
+import "cosmos/base/query/v1beta1/pagination.proto";
+import "google/api/annotations.proto";
+import "cosmos/auction/v1/auction.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/cosmos/evm/x/auction/types";
+
+// Query defines the gRPC query service for auctions.
+service Query {
+  rpc Auction(QueryAuctionRequest) returns (QueryAuctionResponse) {
+    option (google.api.http).get = "/cosmos/auction/v1/auction/{auction_id}";
+  }
+
+  rpc Auctions(QueryAuctionsRequest) returns (QueryAuctionsResponse) {
+    option (google.api.http).get = "/cosmos/auction/v1/auctions";
+  }
+}
+
+message QueryAuctionRequest {
+  string auction_id = 1;
+}
+
+message QueryAuctionResponse {
+  Auction auction = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryAuctionsRequest {
+  cosmos.base.query.v1beta1.PageRequest pagination = 1;
+}
+
+message QueryAuctionsResponse {
+  repeated Auction auctions = 1 [(gogoproto.nullable) = false];
+  cosmos.base.query.v1beta1.PageResponse pagination = 2;
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package cosmos.auction.v1;
+
+import "cosmos/auction/v1/auction.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/cosmos/evm/x/auction/types";
+
+message GenesisState {
+  repeated Auction auctions = 1 [(gogoproto.nullable) = false];
+}

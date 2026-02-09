@@ -27,6 +27,9 @@ import (
 	cosmosevmserver "github.com/cosmos/evm/server"
 	srvflags "github.com/cosmos/evm/server/flags"
 	"github.com/cosmos/evm/utils"
+	"github.com/cosmos/evm/x/auction"
+	auctionkeeper "github.com/cosmos/evm/x/auction/keeper"
+	auctiontypes "github.com/cosmos/evm/x/auction/types"
 	"github.com/cosmos/evm/x/erc20"
 	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
 	erc20types "github.com/cosmos/evm/x/erc20/types"
@@ -188,6 +191,9 @@ type EVMD struct {
 	PreciseBankKeeper precisebankkeeper.Keeper
 	EVMMempool        *evmmempool.ExperimentalEVMMempool
 
+	// Auction keeper
+	AuctionKeeper auctionkeeper.Keeper
+
 	// the module manager
 	ModuleManager      *module.Manager
 	BasicModuleManager module.BasicManager
@@ -238,6 +244,8 @@ func NewExampleApp(
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
 		// Cosmos EVM store keys
 		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, precisebanktypes.StoreKey,
+		// Auction store key
+		auctiontypes.StoreKey,
 	)
 	oKeys := storetypes.NewObjectStoreKeys(banktypes.ObjectStoreKey, evmtypes.ObjectKey)
 
@@ -302,6 +310,12 @@ func NewExampleApp(
 		logger,
 	)
 	app.BankKeeper = app.BankKeeper.WithObjStoreKey(oKeys[banktypes.ObjectStoreKey])
+
+	// Auction keeper
+	app.AuctionKeeper = auctionkeeper.NewKeeper(
+		appCodec,
+		keys[auctiontypes.StoreKey],
+	)
 
 	// optional: enable sign mode textual by overwriting the default tx config (after setting the bank keeper)
 	enabledSignModes := append(authtx.DefaultSignModes, signingtypes.SignMode_SIGN_MODE_TEXTUAL) //nolint:gocritic
@@ -564,6 +578,7 @@ func NewExampleApp(
 		),
 		auth.NewAppModule(appCodec, app.AccountKeeper, authsims.RandomGenesisAccounts, nil),
 		bank.NewAppModule(appCodec, app.BankKeeper, app.AccountKeeper, nil),
+		auction.NewAppModule(app.AuctionKeeper),
 		feegrantmodule.NewAppModule(appCodec, app.AccountKeeper, app.BankKeeper, app.FeeGrantKeeper, app.interfaceRegistry),
 		gov.NewAppModule(appCodec, &app.GovKeeper, app.AccountKeeper, app.BankKeeper, nil),
 		mint.NewAppModule(appCodec, app.MintKeeper, app.AccountKeeper, nil, nil),
@@ -628,7 +643,7 @@ func NewExampleApp(
 		// TODO: remove no-ops? check if all are no-ops before removing
 		distrtypes.ModuleName, slashingtypes.ModuleName,
 		evidencetypes.ModuleName, stakingtypes.ModuleName,
-		authtypes.ModuleName, banktypes.ModuleName, govtypes.ModuleName, genutiltypes.ModuleName,
+		authtypes.ModuleName, banktypes.ModuleName, auctiontypes.ModuleName, govtypes.ModuleName, genutiltypes.ModuleName,
 		authz.ModuleName, feegrant.ModuleName,
 		consensusparamtypes.ModuleName,
 		precisebanktypes.ModuleName,
@@ -639,6 +654,7 @@ func NewExampleApp(
 	// to get the full block gas used.
 	app.ModuleManager.SetOrderEndBlockers(
 		banktypes.ModuleName,
+		auctiontypes.ModuleName,
 		govtypes.ModuleName,
 		stakingtypes.ModuleName,
 		authtypes.ModuleName,
@@ -661,6 +677,7 @@ func NewExampleApp(
 	// NOTE: The genutils module must also occur after auth so that it can access the params from auth.
 	genesisModuleOrder := []string{
 		authtypes.ModuleName, banktypes.ModuleName,
+		auctiontypes.ModuleName,
 		distrtypes.ModuleName, stakingtypes.ModuleName, slashingtypes.ModuleName, govtypes.ModuleName,
 		minttypes.ModuleName,
 		ibcexported.ModuleName,

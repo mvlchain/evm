@@ -1,0 +1,12 @@
+{
+  "name": "auction-client",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "auction-sign": "./cli-sign-confirm.js"
+  },
+  "dependencies": {
+    "ethers": "^6.12.1"
+  }
+}

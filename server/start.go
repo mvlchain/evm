@@ -30,6 +30,7 @@ import (
 	evmmempool "github.com/cosmos/evm/mempool"
 	evmmetrics "github.com/cosmos/evm/metrics"
 	ethdebug "github.com/cosmos/evm/rpc/namespaces/ethereum/debug"
+	"github.com/cosmos/evm/rpc/namespaces/custom/mvl"
 	cosmosevmserverconfig "github.com/cosmos/evm/server/config"
 	srvflags "github.com/cosmos/evm/server/flags"
 	servertypes "github.com/cosmos/evm/server/types"
@@ -418,6 +419,9 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 		logger.Info("starting node with ABCI CometBFT in-process")
 
 		cmtApp := server.NewCometABCIWrapper(app)
+		gossipReactor := mvl.NewGossipReactor()
+		gossipReactor.SetLogger(servercmtlog.CometLoggerWrapper{Logger: svrCtx.Logger.With("module", "mvl_gossip")})
+		mvl.RegisterGossipReactor(gossipReactor)
 		bftNode, err = node.NewNode(
 			cfg,
 			pvm.LoadOrGenFilePV(cfg.PrivValidatorKeyFile(), cfg.PrivValidatorStateFile()),
@@ -427,6 +431,7 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 			cmtcfg.DefaultDBProvider,
 			node.DefaultMetricsProvider(cfg.Instrumentation),
 			servercmtlog.CometLoggerWrapper{Logger: svrCtx.Logger.With("server", "node")},
+			node.CustomReactors(map[string]p2p.Reactor{"MVL_GOSSIP": gossipReactor}),
 		)
 		if err != nil {
 			logger.Error("failed init node", "error", err.Error())

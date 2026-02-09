@@ -5,16 +5,21 @@ services:
       - "6379:6379"
 
   evmd:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile.runtime
     depends_on:
       - redis
     environment:
       MVL_REDIS_ADDR: redis:6379
+    volumes:
+      - .:/app
+      - ./bin/evmd:/usr/local/bin/evmd:ro
+    working_dir: /app
     ports:
       - "26657:26657"
-      - "9090:9090"
       - "1317:1317"
+      - "9090:9090"
       - "8545:8545"
       - "8546:8546"
-    command: >
-      ./local_node.sh -y --no-install
+    command: ["bash", "-lc", "./local_node.sh -y --no-install"]
