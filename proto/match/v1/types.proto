@@ -1,0 +1,314 @@
+syntax = "proto3";
+
+package match.v1;
+
+option go_package = "github.com/cosmos/evm/x/match/types";
+
+// DigestAlgorithm defines supported hash algorithms for commitment fields.
+enum DigestAlgorithm {
+  // DIGEST_ALGORITHM_UNSPECIFIED is invalid and must not be used.
+  DIGEST_ALGORITHM_UNSPECIFIED = 0;
+  // DIGEST_ALGORITHM_SHA256 selects SHA-256.
+  DIGEST_ALGORITHM_SHA256 = 1;
+}
+
+// SignatureAlgorithm defines supported signature algorithms.
+enum SignatureAlgorithm {
+  // SIGNATURE_ALGORITHM_UNSPECIFIED is invalid and must not be used.
+  SIGNATURE_ALGORITHM_UNSPECIFIED = 0;
+  // SIGNATURE_ALGORITHM_SECP256K1 selects secp256k1 signatures.
+  SIGNATURE_ALGORITHM_SECP256K1 = 1;
+  // SIGNATURE_ALGORITHM_ED25519 selects ed25519 signatures.
+  SIGNATURE_ALGORITHM_ED25519 = 2;
+}
+
+// SignDocType defines domain-separated sign-doc types.
+enum SignDocType {
+  // SIGN_DOC_TYPE_UNSPECIFIED is invalid and must not be used.
+  SIGN_DOC_TYPE_UNSPECIFIED = 0;
+  // SIGN_DOC_TYPE_INTENT identifies IntentSignDoc.
+  SIGN_DOC_TYPE_INTENT = 1;
+  // SIGN_DOC_TYPE_RESPONSE identifies ResponseSignDoc.
+  SIGN_DOC_TYPE_RESPONSE = 2;
+  // SIGN_DOC_TYPE_FINALIZE identifies FinalizeSignDoc.
+  SIGN_DOC_TYPE_FINALIZE = 3;
+  // SIGN_DOC_TYPE_CERTIFICATE identifies CertificateSignDoc.
+  SIGN_DOC_TYPE_CERTIFICATE = 4;
+}
+
+// IntentStatus is the off-chain lifecycle of an intent.
+enum IntentStatus {
+  // INTENT_STATUS_UNSPECIFIED is unknown.
+  INTENT_STATUS_UNSPECIFIED = 0;
+  // INTENT_STATUS_OPEN allows responses.
+  INTENT_STATUS_OPEN = 1;
+  // INTENT_STATUS_RESPONDED has at least one response.
+  INTENT_STATUS_RESPONDED = 2;
+  // INTENT_STATUS_FINALIZED has an accepted finalize.
+  INTENT_STATUS_FINALIZED = 3;
+  // INTENT_STATUS_EXPIRED passed its expiry time.
+  INTENT_STATUS_EXPIRED = 4;
+  // INTENT_STATUS_CANCELED was canceled by owner or policy.
+  INTENT_STATUS_CANCELED = 5;
+}
+
+// CertificateStatus is the lifecycle of a certificate artifact.
+enum CertificateStatus {
+  // CERTIFICATE_STATUS_UNSPECIFIED is unknown.
+  CERTIFICATE_STATUS_UNSPECIFIED = 0;
+  // CERTIFICATE_STATUS_BUILT is assembled off-chain.
+  CERTIFICATE_STATUS_BUILT = 1;
+  // CERTIFICATE_STATUS_SUBMITTED is sent to chain.
+  CERTIFICATE_STATUS_SUBMITTED = 2;
+  // CERTIFICATE_STATUS_CONFIRMED is verified on-chain.
+  CERTIFICATE_STATUS_CONFIRMED = 3;
+  // CERTIFICATE_STATUS_REJECTED was rejected by verifier.
+  CERTIFICATE_STATUS_REJECTED = 4;
+  // CERTIFICATE_STATUS_EXPIRED passed its expiry time.
+  CERTIFICATE_STATUS_EXPIRED = 5;
+}
+
+// BoardRecordType is a compact classification for inbox and outbox records.
+enum BoardRecordType {
+  // BOARD_RECORD_TYPE_UNSPECIFIED is unknown.
+  BOARD_RECORD_TYPE_UNSPECIFIED = 0;
+  // BOARD_RECORD_TYPE_INTENT indicates an intent record.
+  BOARD_RECORD_TYPE_INTENT = 1;
+  // BOARD_RECORD_TYPE_RESPONSE indicates a response record.
+  BOARD_RECORD_TYPE_RESPONSE = 2;
+  // BOARD_RECORD_TYPE_FINALIZE indicates a finalize record.
+  BOARD_RECORD_TYPE_FINALIZE = 3;
+  // BOARD_RECORD_TYPE_CERTIFICATE indicates a certificate record.
+  BOARD_RECORD_TYPE_CERTIFICATE = 4;
+}
+
+// ErrorCode is the canonical protocol-level error enum.
+enum ErrorCode {
+  // ERROR_CODE_UNSPECIFIED is unknown.
+  ERROR_CODE_UNSPECIFIED = 0;
+  // ERROR_CODE_INVALID_REQUEST indicates malformed input.
+  ERROR_CODE_INVALID_REQUEST = 1;
+  // ERROR_CODE_UNAUTHORIZED indicates missing or invalid auth proof.
+  ERROR_CODE_UNAUTHORIZED = 2;
+  // ERROR_CODE_FORBIDDEN indicates access denial.
+  ERROR_CODE_FORBIDDEN = 3;
+  // ERROR_CODE_NOT_FOUND indicates missing target resource.
+  ERROR_CODE_NOT_FOUND = 4;
+  // ERROR_CODE_ALREADY_EXISTS indicates duplicate resource creation.
+  ERROR_CODE_ALREADY_EXISTS = 5;
+  // ERROR_CODE_REPLAY_DETECTED indicates duplicate or replayed artifact.
+  ERROR_CODE_REPLAY_DETECTED = 6;
+  // ERROR_CODE_EXPIRED indicates expiry check failure.
+  ERROR_CODE_EXPIRED = 7;
+  // ERROR_CODE_SIGNER_MISMATCH indicates signer-role mismatch.
+  ERROR_CODE_SIGNER_MISMATCH = 8;
+  // ERROR_CODE_INVALID_SIGNATURE indicates cryptographic verification failure.
+  ERROR_CODE_INVALID_SIGNATURE = 9;
+  // ERROR_CODE_HASH_MISMATCH indicates commitment mismatch.
+  ERROR_CODE_HASH_MISMATCH = 10;
+  // ERROR_CODE_STATE_CONFLICT indicates invalid state transition.
+  ERROR_CODE_STATE_CONFLICT = 11;
+  // ERROR_CODE_RATE_LIMITED indicates throttling or anti-spam rejection.
+  ERROR_CODE_RATE_LIMITED = 12;
+  // ERROR_CODE_BACKEND_UNAVAILABLE indicates transient backend dependency issue.
+  ERROR_CODE_BACKEND_UNAVAILABLE = 13;
+  // ERROR_CODE_CHAIN_REJECTED indicates on-chain verification rejection.
+  ERROR_CODE_CHAIN_REJECTED = 14;
+  // ERROR_CODE_CHAIN_TIMEOUT indicates on-chain confirmation timeout.
+  ERROR_CODE_CHAIN_TIMEOUT = 15;
+  // ERROR_CODE_INTERNAL indicates unexpected server failure.
+  ERROR_CODE_INTERNAL = 16;
+}
+
+// Signature stores signer metadata and raw signature bytes.
+message Signature {
+  string signer = 1;
+  SignatureAlgorithm algorithm = 2;
+  bytes public_key = 3;
+  bytes signature = 4;
+}
+
+// ErrorStatus stores structured status details for API responses.
+message ErrorStatus {
+  ErrorCode code = 1;
+  string message = 2;
+  string field = 3;
+  string detail = 4;
+  bool retryable = 5;
+}
+
+// PaginationRequest defines cursor pagination input.
+message PaginationRequest {
+  uint32 limit = 1;
+  string cursor = 2;
+}
+
+// PaginationResponse defines cursor pagination output.
+message PaginationResponse {
+  string next_cursor = 1;
+  uint64 total = 2;
+}
+
+// AccessProof is auth material for inbox and outbox access.
+message AccessProof {
+  string viewer = 1;
+  bytes token = 2;
+  bytes nonce = 3;
+  int64 issued_unix = 4;
+  int64 expires_unix = 5;
+  bytes scope_hash = 6;
+}
+
+// IntentPayload is the canonical payload signed by maker.
+message IntentPayload {
+  string protocol_version = 1;
+  string board_id = 2;
+  string chain_id = 3;
+  string pool_id = 4;
+  string intent_id = 5;
+  string initiator = 6;
+  uint64 initiator_nonce = 7;
+  int64 issued_unix = 8;
+  int64 expires_unix = 9;
+  bytes context_hash = 10;
+  bytes terms_hash = 11;
+  bytes policy_hash = 12;
+  string recipient = 13;
+  bytes replay_guard = 14;
+  DigestAlgorithm digest_algorithm = 15;
+}
+
+// IntentSignDoc is the domain-separated sign-doc for intent.
+message IntentSignDoc {
+  SignDocType sign_doc_type = 1;
+  IntentPayload payload = 2;
+}
+
+// SignedIntent bundles Intent payload and its signature.
+message SignedIntent {
+  IntentPayload payload = 1;
+  Signature signature = 2;
+  bytes sign_bytes_hash = 3;
+}
+
+// ResponsePayload is the canonical payload signed by responder.
+message ResponsePayload {
+  string protocol_version = 1;
+  string board_id = 2;
+  string chain_id = 3;
+  string pool_id = 4;
+  string intent_id = 5;
+  bytes intent_sign_hash = 6;
+  string response_id = 7;
+  string responder = 8;
+  uint64 responder_nonce = 9;
+  int64 issued_unix = 10;
+  int64 expires_unix = 11;
+  bytes context_hash = 12;
+  bytes terms_hash = 13;
+  bytes policy_hash = 14;
+  string recipient = 15;
+  bytes replay_guard = 16;
+  DigestAlgorithm digest_algorithm = 17;
+}
+
+// ResponseSignDoc is the domain-separated sign-doc for response.
+message ResponseSignDoc {
+  SignDocType sign_doc_type = 1;
+  ResponsePayload payload = 2;
+}
+
+// SignedResponse bundles Response payload and its signature.
+message SignedResponse {
+  ResponsePayload payload = 1;
+  Signature signature = 2;
+  bytes sign_bytes_hash = 3;
+}
+
+// FinalizePayload is the canonical payload for bilateral finalize signatures.
+message FinalizePayload {
+  string protocol_version = 1;
+  string board_id = 2;
+  string chain_id = 3;
+  string pool_id = 4;
+  string intent_id = 5;
+  string response_id = 6;
+  bytes intent_sign_hash = 7;
+  bytes response_sign_hash = 8;
+  string finalize_id = 9;
+  string initiator = 10;
+  string responder = 11;
+  uint64 finalize_nonce = 12;
+  int64 issued_unix = 13;
+  int64 expires_unix = 14;
+  bytes context_hash = 15;
+  bytes settlement_hash = 16;
+  bytes replay_guard = 17;
+  DigestAlgorithm digest_algorithm = 18;
+}
+
+// FinalizeSignDoc is the domain-separated sign-doc for finalize.
+message FinalizeSignDoc {
+  SignDocType sign_doc_type = 1;
+  FinalizePayload payload = 2;
+}
+
+// SignedFinalize bundles Finalize payload and both signatures.
+message SignedFinalize {
+  FinalizePayload payload = 1;
+  Signature initiator_signature = 2;
+  Signature responder_signature = 3;
+  bytes sign_bytes_hash = 4;
+}
+
+// CertificatePayload is the payload for off-chain and optional board attestation.
+message CertificatePayload {
+  string protocol_version = 1;
+  string board_id = 2;
+  string chain_id = 3;
+  string pool_id = 4;
+  string intent_id = 5;
+  string response_id = 6;
+  string finalize_id = 7;
+  string certificate_id = 8;
+  bytes intent_sign_hash = 9;
+  bytes response_sign_hash = 10;
+  bytes finalize_sign_hash = 11;
+  string initiator = 12;
+  string responder = 13;
+  int64 issued_unix = 14;
+  int64 expires_unix = 15;
+  bytes context_hash = 16;
+  bytes replay_guard = 17;
+  DigestAlgorithm digest_algorithm = 18;
+}
+
+// CertificateSignDoc is the domain-separated sign-doc for certificate.
+message CertificateSignDoc {
+  SignDocType sign_doc_type = 1;
+  CertificatePayload payload = 2;
+}
+
+// MatchCertificate is the full proof bundle across all signed stages.
+message MatchCertificate {
+  CertificatePayload payload = 1;
+  SignedIntent intent = 2;
+  SignedResponse response = 3;
+  SignedFinalize finalize = 4;
+  Signature board_signature = 5;
+  bytes sign_bytes_hash = 6;
+}
+
+// BoardRecord is metadata used by inbox and outbox listings.
+message BoardRecord {
+  BoardRecordType record_type = 1;
+  string pool_id = 2;
+  string intent_id = 3;
+  string response_id = 4;
+  string finalize_id = 5;
+  string certificate_id = 6;
+  string sender = 7;
+  string recipient = 8;
+  int64 created_unix = 9;
+  bytes context_hash = 10;
+}

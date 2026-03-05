@@ -1,0 +1,183 @@
+syntax = "proto3";
+
+package match.v1;
+
+import "match/v1/types.proto";
+
+option go_package = "github.com/cosmos/evm/x/match/types";
+
+// Board defines off-chain board RPCs for signed records.
+service Board {
+  // PublishIntent stores a signed intent artifact.
+  rpc PublishIntent(PublishIntentRequest) returns (PublishIntentResult);
+  // PublishResponse stores a signed response artifact.
+  rpc PublishResponse(PublishResponseRequest) returns (PublishResponseResult);
+  // PublishFinalize stores a bilateral signed finalize artifact.
+  rpc PublishFinalize(PublishFinalizeRequest) returns (PublishFinalizeResult);
+
+  // GetIntent returns a signed intent and its board status.
+  rpc GetIntent(GetIntentRequest) returns (GetIntentResult);
+  // GetResponse returns one response by composite key.
+  rpc GetResponse(GetResponseRequest) returns (GetResponseResult);
+  // GetFinalize returns one finalize by composite key.
+  rpc GetFinalize(GetFinalizeRequest) returns (GetFinalizeResult);
+  // ListResponses returns responses for an intent.
+  rpc ListResponses(ListResponsesRequest) returns (ListResponsesResult);
+  // GetCertificate returns one match certificate.
+  rpc GetCertificate(GetCertificateRequest) returns (GetCertificateResult);
+
+  // ListInbox returns recipient-visible records.
+  rpc ListInbox(ListInboxRequest) returns (ListInboxResult);
+  // ListOutbox returns sender-visible records.
+  rpc ListOutbox(ListOutboxRequest) returns (ListOutboxResult);
+
+  // SubmitCertificate optionally relays a certificate to on-chain verifier.
+  rpc SubmitCertificate(SubmitCertificateRequest)
+      returns (SubmitCertificateResult);
+}
+
+// PublishIntentRequest is input for PublishIntent.
+message PublishIntentRequest {
+  SignedIntent intent = 1;
+  bool allow_replace = 2;
+}
+
+// PublishIntentResult is output for PublishIntent.
+message PublishIntentResult {
+  bytes intent_sign_hash = 1;
+  IntentStatus status = 2;
+  int64 stored_unix = 3;
+}
+
+// PublishResponseRequest is input for PublishResponse.
+message PublishResponseRequest {
+  SignedResponse response = 1;
+  bool allow_replace = 2;
+}
+
+// PublishResponseResult is output for PublishResponse.
+message PublishResponseResult {
+  bytes response_sign_hash = 1;
+  int64 stored_unix = 2;
+}
+
+// PublishFinalizeRequest is input for PublishFinalize.
+message PublishFinalizeRequest {
+  SignedFinalize finalize = 1;
+  bool build_certificate = 2;
+}
+
+// PublishFinalizeResult is output for PublishFinalize.
+message PublishFinalizeResult {
+  bytes finalize_sign_hash = 1;
+  MatchCertificate certificate = 2;
+  CertificateStatus certificate_status = 3;
+  int64 stored_unix = 4;
+}
+
+// GetIntentRequest is input for GetIntent.
+message GetIntentRequest {
+  string pool_id = 1;
+  string intent_id = 2;
+}
+
+// GetIntentResult is output for GetIntent.
+message GetIntentResult {
+  SignedIntent intent = 1;
+  IntentStatus status = 2;
+  uint64 response_total = 3;
+  bool finalized = 4;
+}
+
+// GetResponseRequest is input for GetResponse.
+message GetResponseRequest {
+  string pool_id = 1;
+  string intent_id = 2;
+  string response_id = 3;
+}
+
+// GetResponseResult is output for GetResponse.
+message GetResponseResult {
+  SignedResponse response = 1;
+}
+
+// GetFinalizeRequest is input for GetFinalize.
+message GetFinalizeRequest {
+  string pool_id = 1;
+  string intent_id = 2;
+  string response_id = 3;
+  string finalize_id = 4;
+}
+
+// GetFinalizeResult is output for GetFinalize.
+message GetFinalizeResult {
+  SignedFinalize finalize = 1;
+}
+
+// ListResponsesRequest is input for ListResponses.
+message ListResponsesRequest {
+  string pool_id = 1;
+  string intent_id = 2;
+  PaginationRequest pagination = 3;
+}
+
+// ListResponsesResult is output for ListResponses.
+message ListResponsesResult {
+  repeated SignedResponse responses = 1;
+  PaginationResponse pagination = 2;
+}
+
+// GetCertificateRequest is input for GetCertificate.
+message GetCertificateRequest {
+  string pool_id = 1;
+  string certificate_id = 2;
+}
+
+// GetCertificateResult is output for GetCertificate.
+message GetCertificateResult {
+  MatchCertificate certificate = 1;
+  CertificateStatus status = 2;
+  string chain_match_id = 3;
+}
+
+// ListInboxRequest is input for ListInbox.
+message ListInboxRequest {
+  string recipient = 1;
+  AccessProof access_proof = 2;
+  PaginationRequest pagination = 3;
+}
+
+// ListInboxResult is output for ListInbox.
+message ListInboxResult {
+  repeated BoardRecord records = 1;
+  PaginationResponse pagination = 2;
+}
+
+// ListOutboxRequest is input for ListOutbox.
+message ListOutboxRequest {
+  string sender = 1;
+  AccessProof access_proof = 2;
+  PaginationRequest pagination = 3;
+}
+
+// ListOutboxResult is output for ListOutbox.
+message ListOutboxResult {
+  repeated BoardRecord records = 1;
+  PaginationResponse pagination = 2;
+}
+
+// SubmitCertificateRequest is input for SubmitCertificate.
+message SubmitCertificateRequest {
+  MatchCertificate certificate = 1;
+  string submitter = 2;
+  bool wait_result = 3;
+}
+
+// SubmitCertificateResult is output for SubmitCertificate.
+message SubmitCertificateResult {
+  bytes tx_hash = 1;
+  uint64 tx_height = 2;
+  string match_id = 3;
+  CertificateStatus certificate_status = 4;
+  ErrorStatus chain_error = 5;
+}

@@ -13,6 +13,13 @@ LOGLEVEL="info"
 CHAINDIR="$HOME/.evmd"
 
 BASEFEE=10000000
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Matchboard sidecar configuration
+START_MATCHBOARD=true
+MATCHBOARD_ADDR="${MATCHBOARD_ADDR:-:8080}"
+MATCHBOARD_PID=""
+MATCHBOARD_LOG="${MATCHBOARD_LOG:-$HOME/.evmd/matchboard.log}"
 
 # Path variables
 CONFIG_TOML=$CHAINDIR/config/config.toml
@@ -49,6 +56,8 @@ Options:
   --additional-users N     Create N extra users: dev4, dev5, ...
   --mnemonic-file PATH     Where to write mnemonics YAML (default: \$HOME/.evmd/mnemonics.yaml)
   --mnemonics-input PATH   Read dev mnemonics from a yaml file (key: mnemonics:)
+  --no-matchboard          Do not start matchboard sidecar with the node
+  --matchboard-addr ADDR   Matchboard listen address (default: :8080)
 EOF
 }
 
@@ -88,6 +97,16 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --mnemonics-input requires a path."; usage; exit 1
       fi
       MNEMONICS_INPUT="$2"; shift 2
+      ;;
+    --no-matchboard)
+      echo "Flag --no-matchboard passed -> Matchboard sidecar will not be started."
+      START_MATCHBOARD=false; shift
+      ;;
+    --matchboard-addr)
+      if [[ -z "${2:-}" || "$2" =~ ^- ]]; then
+        echo "Error: --matchboard-addr requires an address."; usage; exit 1
+      fi
+      MATCHBOARD_ADDR="$2"; shift 2
       ;;
     -h|--help)
       usage; exit 0
@@ -338,7 +357,43 @@ if [[ $overwrite == "y" || $overwrite == "Y" ]]; then
   fi
 fi
 
+# ---------- Matchboard sidecar ----------
+cleanup_matchboard() {
+  if [[ -n "$MATCHBOARD_PID" ]] && kill -0 "$MATCHBOARD_PID" 2>/dev/null; then
+    echo "stopping matchboard (pid: $MATCHBOARD_PID)"
+    kill "$MATCHBOARD_PID" 2>/dev/null || true
+    wait "$MATCHBOARD_PID" 2>/dev/null || true
+  fi
+}
+
+start_matchboard() {
+  if [[ "$START_MATCHBOARD" != true ]]; then
+    return
+  fi
+
+  command -v go >/dev/null 2>&1 || {
+    echo >&2 "go not installed. required to run matchboard sidecar."
+    exit 1
+  }
+
+  mkdir -p "$(dirname "$MATCHBOARD_LOG")"
+  echo "starting matchboard sidecar at $MATCHBOARD_ADDR (log: $MATCHBOARD_LOG)"
+
+  MATCHBOARD_ADDR="$MATCHBOARD_ADDR" \
+  MATCHBOARD_TOKEN_ALICE="${MATCHBOARD_TOKEN_ALICE:-token-alice}" \
+  MATCHBOARD_TOKEN_BOB="${MATCHBOARD_TOKEN_BOB:-token-bob}" \
+  MATCHBOARD_PRINCIPAL_ALICE="${MATCHBOARD_PRINCIPAL_ALICE:-alice}" \
+  MATCHBOARD_PRINCIPAL_BOB="${MATCHBOARD_PRINCIPAL_BOB:-bob}" \
+  go run "$SCRIPT_DIR/server/matchboard/cmd/matchboardd" >>"$MATCHBOARD_LOG" 2>&1 &
+
+  MATCHBOARD_PID=$!
+}
+
+trap cleanup_matchboard EXIT INT TERM
+
 # Start the node
+start_matchboard
+
 evmd start "$TRACE" \
 	--pruning nothing \
 	--log_level $LOGLEVEL \

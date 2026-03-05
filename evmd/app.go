@@ -38,6 +38,9 @@ import (
 	"github.com/cosmos/evm/x/ibc/transfer"
 	transferkeeper "github.com/cosmos/evm/x/ibc/transfer/keeper"
 	transferv2 "github.com/cosmos/evm/x/ibc/transfer/v2"
+	"github.com/cosmos/evm/x/match"
+	matchkeeper "github.com/cosmos/evm/x/match/keeper"
+	matchtypes "github.com/cosmos/evm/x/match/types"
 	"github.com/cosmos/evm/x/vm"
 	evmkeeper "github.com/cosmos/evm/x/vm/keeper"
 	evmtypes "github.com/cosmos/evm/x/vm/types"
@@ -182,6 +185,7 @@ type EVMD struct {
 	FeeMarketKeeper feemarketkeeper.Keeper
 	EVMKeeper       *evmkeeper.Keeper
 	Erc20Keeper     erc20keeper.Keeper
+	MatchKeeper     matchkeeper.Keeper
 	EVMMempool      *evmmempool.ExperimentalEVMMempool
 
 	// the module manager
@@ -233,7 +237,7 @@ func NewExampleApp(
 		// ibc keys
 		ibcexported.StoreKey, ibctransfertypes.StoreKey,
 		// Cosmos EVM store keys
-		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey,
+		evmtypes.StoreKey, feemarkettypes.StoreKey, erc20types.StoreKey, matchtypes.StoreKey,
 	)
 	oKeys := storetypes.NewObjectStoreKeys(banktypes.ObjectStoreKey, evmtypes.ObjectKey)
 
@@ -473,6 +477,10 @@ func NewExampleApp(
 		app.StakingKeeper,
 		&app.TransferKeeper,
 	)
+	app.MatchKeeper = matchkeeper.NewKeeper(
+		appCodec,
+		keys[matchtypes.StoreKey],
+	)
 
 	// instantiate IBC transfer keeper AFTER the ERC-20 keeper to use it in the instantiation
 	app.TransferKeeper = transferkeeper.NewKeeper(
@@ -569,6 +577,7 @@ func NewExampleApp(
 		vm.NewAppModule(app.EVMKeeper, app.AccountKeeper, app.BankKeeper, app.AccountKeeper.AddressCodec()),
 		feemarket.NewAppModule(app.FeeMarketKeeper),
 		erc20.NewAppModule(app.Erc20Keeper, app.AccountKeeper),
+		match.NewAppModule(app.MatchKeeper),
 	)
 
 	// BasicModuleManager defines the module BasicManager which is in charge of setting up basic,
@@ -609,6 +618,7 @@ func NewExampleApp(
 		// Cosmos EVM BeginBlockers
 		erc20types.ModuleName, feemarkettypes.ModuleName,
 		evmtypes.ModuleName, // NOTE: EVM BeginBlocker must come after FeeMarket BeginBlocker
+		matchtypes.ModuleName,
 
 		// TODO: remove no-ops? check if all are no-ops before removing
 		distrtypes.ModuleName, slashingtypes.ModuleName,
@@ -628,7 +638,7 @@ func NewExampleApp(
 		authtypes.ModuleName,
 
 		// Cosmos EVM EndBlockers
-		evmtypes.ModuleName, erc20types.ModuleName, feemarkettypes.ModuleName,
+		evmtypes.ModuleName, erc20types.ModuleName, feemarkettypes.ModuleName, matchtypes.ModuleName,
 
 		// no-ops
 		ibcexported.ModuleName, ibctransfertypes.ModuleName,
@@ -655,6 +665,7 @@ func NewExampleApp(
 		evmtypes.ModuleName,
 		feemarkettypes.ModuleName,
 		erc20types.ModuleName,
+		matchtypes.ModuleName,
 
 		ibctransfertypes.ModuleName,
 		genutiltypes.ModuleName, evidencetypes.ModuleName, authz.ModuleName,

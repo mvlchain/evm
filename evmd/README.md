@@ -36,6 +36,10 @@ Available flags are:
 - `-n`: Do **not** overwrite previous database
 - `--no-install`: Skip installation of the binary
 - `--remote-debugging`: Build a binary suitable for remote debugging
+- `--no-matchboard`: Do not start matchboard sidecar with the node
+- `--matchboard-addr`: Matchboard listen address (default `:8080`)
+
+By default `local_node.sh` also starts the matchboard sidecar at `http://127.0.0.1:8080`.
 
 ## Connect to Wallet
 

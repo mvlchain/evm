@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+package match.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+import "match/v1/types.proto";
+
+option go_package = "github.com/cosmos/evm/x/match/types";
+
+// Msg defines optional on-chain certificate submission RPC.
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // SubmitMatchCertificate verifies signatures and records a match.
+  rpc SubmitMatchCertificate(MsgSubmitMatchCertificate)
+      returns (MsgSubmitMatchCertificateResponse);
+}
+
+// MsgSubmitMatchCertificate is the tx payload for certificate submission.
+message MsgSubmitMatchCertificate {
+  option (amino.name) = "cosmos/evm/x/match/MsgSubmitMatchCertificate";
+  option (cosmos.msg.v1.signer) = "submitter";
+
+  string submitter = 1 [ (cosmos_proto.scalar) = "cosmos.AddressString" ];
+  MatchCertificate certificate = 2
+      [ (gogoproto.nullable) = false, (amino.dont_omitempty) = true ];
+}
+
+// MsgSubmitMatchCertificateResponse is the tx result payload.
+message MsgSubmitMatchCertificateResponse {
+  string match_id = 1;
+  bytes certificate_hash = 2;
+  string replay_key = 3;
+}
