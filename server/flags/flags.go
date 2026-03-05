@@ -10,11 +10,13 @@ import (
 
 // CometBFT/cosmos-sdk full-node start flags
 const (
-	WithCometBFT = "with-cometbft"
-	Address      = "address"
-	Transport    = "transport"
-	TraceStore   = "trace-store"
-	CPUProfile   = "cpu-profile"
+	WithCometBFT    = "with-cometbft"
+	Address         = "address"
+	Transport       = "transport"
+	TraceStore      = "trace-store"
+	CPUProfile      = "cpu-profile"
+	HiServerAddress = "hi-server.address"
+	HiServerPrivateKey = "hi-server.private-key"
 
 	// AppDBBackend is the type of database for application and snapshots databases
 	AppDBBackend = "app-db-backend"

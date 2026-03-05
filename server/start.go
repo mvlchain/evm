@@ -179,6 +179,7 @@ which accepts a path for the resulting pprof file.
 	cmd.Flags().Uint(server.FlagInvCheckPeriod, 0, "Assert registered invariants every N blocks")
 	cmd.Flags().Uint64(server.FlagMinRetainBlocks, 0, "Minimum block height offset during ABCI commit to prune CometBFT blocks")
 	cmd.Flags().String(srvflags.AppDBBackend, "", "The type of database for application and snapshots databases")
+	cmd.Flags().String(srvflags.HiServerAddress, defaultHiServerAddress, "the address to bind the lightweight hi HTTP server (set empty to disable)")
 
 	cmd.Flags().Int(server.FlagMempoolMaxTxs, 0, "The maximum number of transactions in the mempool")
 	// explicitly override the app.toml default value, as normally config file takes precedence over flag defaults
@@ -303,6 +304,7 @@ func startStandAlone(svrCtx *server.Context, opts StartOptions) error {
 
 	svr.SetLogger(servercmtlog.CometLoggerWrapper{Logger: svrCtx.Logger.With("server", "abci")})
 	g, ctx := getCtx(svrCtx, false)
+	startHiServer(ctx, g, svrCtx.Logger.With("server", "web"), svrCtx.Viper.GetString(srvflags.HiServerAddress), app)
 
 	g.Go(func() error {
 		if err := svr.Start(); err != nil {
@@ -392,6 +394,8 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 			logger.Error("close application failed", "error", err.Error())
 		}
 	}()
+	startHiServer(ctx, g, svrCtx.Logger.With("server", "web"), svrCtx.Viper.GetString(srvflags.HiServerAddress), app)
+
 	evmApp, ok := app.(Application)
 	if !ok {
 		svrCtx.Logger.Error("failed to get server config", "error", err.Error())
