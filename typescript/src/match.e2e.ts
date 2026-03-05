@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import process from "node:process";
-import { SigningKey, Wallet, getAddress, isAddress } from "ethers";
+import { Contract, JsonRpcProvider, SigningKey, Wallet, getAddress, isAddress } from "ethers";
 
 type PublishIntentRequest = {
   protocol_version?: string;
@@ -112,7 +112,14 @@ type ListRecordsResponse = {
 };
 
 const RPC_URL = mustEnv("NODE_RPC_URL", "http://127.0.0.1:26657");
+const EVM_RPC_URL = mustEnv("EVM_RPC_URL", "http://127.0.0.1:8545");
 const MATCHBOARD_URL = mustEnv("MATCHBOARD_URL", "http://127.0.0.1:8080");
+const MATCH_PRECOMPILE_ADDRESS = mustEnv(
+  "MATCH_PRECOMPILE_ADDRESS",
+  "0x0000000000000000000000000000000000000808",
+);
+const MATCH_EXPECT_ONCHAIN_REPLAY = mustEnv("MATCH_EXPECT_ONCHAIN_REPLAY", "0") === "1";
+const MATCH_REQUIRE_PRECOMPILE = "1";
 const ALICE_TOKEN = mustEnv("MATCHBOARD_TOKEN_ALICE", "token-alice");
 const BOB_TOKEN = mustEnv("MATCHBOARD_TOKEN_BOB", "token-bob");
 const ALICE = mustEnv("MATCHBOARD_PRINCIPAL_ALICE", "alice");
@@ -126,6 +133,11 @@ const BOB_PRIVATE_KEY = mustPrivateKey(
   "MATCHBOARD_BOB_PRIVATE_KEY",
   "0x741de4f8988ea941d3ff0287911ca4074e62b7d45c991a51186455366f10b544",
 );
+const MATCH_PRECOMPILE_ABI = [
+  "function hasReplay(string poolId, string intentId) view returns (bool exists)",
+  "function getReplay(string poolId, string intentId) view returns (bool found, string matchId)",
+  "function getReplayParties(string poolId, string intentId) view returns (bool found, string matchId, string requester, string responder)",
+];
 
 function mustEnv(key: string, fallback: string): string {
   return process.env[key] ?? fallback;
@@ -257,6 +269,19 @@ async function ensureNodeIsRunning(): Promise<void> {
   logInfo("node is reachable", { latest_block_height: height });
 }
 
+async function ensureEvmRpcIsRunning(): Promise<void> {
+  try {
+    const provider = new JsonRpcProvider(EVM_RPC_URL);
+    const blockNumber = await provider.getBlockNumber();
+    logInfo("evm rpc is reachable", { evm_rpc_url: EVM_RPC_URL, block_number: blockNumber });
+  } catch (err) {
+    throw new Error(
+      `failed to connect to EVM JSON-RPC at ${EVM_RPC_URL} (set EVM_RPC_URL or start node JSON-RPC)`,
+      { cause: err },
+    );
+  }
+}
+
 async function ensureMatchboardIsRunning(): Promise<void> {
   try {
     logInfo("checking matchboard endpoint", { url: `${MATCHBOARD_URL}/v1/inbox` });
@@ -325,15 +350,97 @@ function assertStatus(status: number, expected: number, context: string): void {
   assert.equal(status, expected, `${context} expected HTTP ${expected}, got ${status}`);
 }
 
+async function queryMatchPrecompile(poolId: string, intentId: string): Promise<{
+  available: boolean;
+  partiesAvailable: boolean;
+  exists: boolean;
+  found: boolean;
+  matchId: string;
+  requester: string;
+  responder: string;
+}> {
+  logInfo("querying match precompile", {
+    evm_rpc_url: EVM_RPC_URL,
+    precompile_address: MATCH_PRECOMPILE_ADDRESS,
+    pool_id: poolId,
+    intent_id: intentId,
+  });
+  const provider = new JsonRpcProvider(EVM_RPC_URL);
+  const precompile = new Contract(MATCH_PRECOMPILE_ADDRESS, MATCH_PRECOMPILE_ABI, provider);
+  try {
+    const exists = Boolean(await precompile.hasReplay(poolId, intentId));
+    const replay = (await precompile.getReplay(poolId, intentId)) as unknown as [boolean, string];
+    const found = Boolean(replay[0]);
+    const matchId = String(replay[1] ?? "");
+    let partiesAvailable = true;
+    let requester = "";
+    let responder = "";
+
+    try {
+      const parties = (await precompile.getReplayParties(poolId, intentId)) as unknown as [
+        boolean,
+        string,
+        string,
+        string,
+      ];
+      requester = String(parties[2] ?? "");
+      responder = String(parties[3] ?? "");
+    } catch (partiesErr) {
+      const asObj = partiesErr as { code?: string; value?: unknown; reason?: string };
+      const reason = typeof asObj?.reason === "string" ? asObj.reason : "";
+      if (
+        (asObj?.code === "BAD_DATA" && asObj?.value === "0x") ||
+        (asObj?.code === "CALL_EXCEPTION" && reason.includes("no method with id"))
+      ) {
+        partiesAvailable = false;
+      } else {
+        throw partiesErr;
+      }
+    }
+
+    logInfo("match precompile response", {
+      available: true,
+      parties_available: partiesAvailable,
+      exists,
+      found,
+      match_id: matchId,
+      requester,
+      responder,
+    });
+    return { available: true, partiesAvailable, exists, found, matchId, requester, responder };
+  } catch (err) {
+    const asObj = err as { code?: string; value?: unknown; shortMessage?: string };
+    if (asObj?.code === "BAD_DATA" && asObj?.value === "0x") {
+      logInfo("match precompile unavailable or method inactive", {
+        precompile_address: MATCH_PRECOMPILE_ADDRESS,
+        code: asObj.code,
+        short_message: asObj.shortMessage,
+      });
+      return {
+        available: false,
+        partiesAvailable: false,
+        exists: false,
+        found: false,
+        matchId: "",
+        requester: "",
+        responder: "",
+      };
+    }
+    throw err;
+  }
+}
+
 async function main(): Promise<void> {
   logInfo("match e2e started", {
     rpc_url: RPC_URL,
+    evm_rpc_url: EVM_RPC_URL,
     matchboard_url: MATCHBOARD_URL,
     alice_principal: ALICE,
     bob_principal: BOB,
     verbose: VERBOSE,
   });
   await ensureNodeIsRunning();
+  await ensureEvmRpcIsRunning();
   await ensureMatchboardIsRunning();
   assertPrincipalPrivateKeyMatch(ALICE, ALICE_PRIVATE_KEY, "alice");
   assertPrincipalPrivateKeyMatch(BOB, BOB_PRIVATE_KEY, "bob");
@@ -484,6 +591,32 @@ async function main(): Promise<void> {
   assertStatus(bobOutbox.status, 200, "bob outbox");
   assert.equal(bobOutbox.data.principal, BOB);
   assert.ok(bobOutbox.data.records.some((r) => r.record_type === "response" && r.response_sign_hash === responseSignHash));
+
+  const replay = await queryMatchPrecompile(intentReq.pool_id, intentReq.intent_id);
+  if (!replay.available) {
+    if (MATCH_REQUIRE_PRECOMPILE || MATCH_EXPECT_ONCHAIN_REPLAY) {
+      assert.fail(
+        `match precompile ${MATCH_PRECOMPILE_ADDRESS} is not available on current node; ` +
+          "enable precompile or unset MATCH_REQUIRE_PRECOMPILE/MATCH_EXPECT_ONCHAIN_REPLAY",
+      );
+    }
+    logInfo("skipping on-chain replay assertion because precompile is unavailable");
+  } else {
+    assert.equal(replay.exists, replay.found, "hasReplay/getReplay result mismatch");
+    if (MATCH_EXPECT_ONCHAIN_REPLAY) {
+      assert.equal(replay.found, true, "on-chain replay expected but not found");
+      assert.notEqual(replay.matchId.trim(), "", "on-chain matchId should not be empty");
+      if (replay.partiesAvailable) {
+        assert.notEqual(replay.requester.trim(), "", "on-chain requester should not be empty");
+        assert.notEqual(replay.responder.trim(), "", "on-chain responder should not be empty");
+      }
+    } else {
+      logInfo(
+        "on-chain replay enforcement is disabled (set MATCH_EXPECT_ONCHAIN_REPLAY=1 to require replay existence)",
+        replay,
+      );
+    }
+  }
 
   logInfo("match e2e test finished successfully");
   console.log("match e2e test passed");

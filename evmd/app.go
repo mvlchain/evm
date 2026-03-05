@@ -435,6 +435,10 @@ func NewExampleApp(
 		appCodec, authtypes.NewModuleAddress(govtypes.ModuleName),
 		keys[feemarkettypes.StoreKey],
 	)
+	app.MatchKeeper = matchkeeper.NewKeeper(
+		appCodec,
+		keys[matchtypes.StoreKey],
+	)
 
 	// Set up EVM keeper
 	tracer := cast.ToString(appOpts.Get(srvflags.EVMTracer))
@@ -458,6 +462,7 @@ func NewExampleApp(
 			app.DistrKeeper,
 			app.BankKeeper,
 			&app.Erc20Keeper,
+			app.MatchKeeper,
 			&app.TransferKeeper,
 			app.IBCKeeper.ChannelKeeper,
 			app.IBCKeeper.ClientKeeper,
@@ -476,10 +481,6 @@ func NewExampleApp(
 		app.EVMKeeper,
 		app.StakingKeeper,
 		&app.TransferKeeper,
-	)
-	app.MatchKeeper = matchkeeper.NewKeeper(
-		appCodec,
-		keys[matchtypes.StoreKey],
 	)
 
 	// instantiate IBC transfer keeper AFTER the ERC-20 keeper to use it in the instantiation

@@ -63,3 +63,9 @@ type ERC20Keeper interface {
 	GetERC20Map(ctx sdk.Context, erc20 ethcommon.Address) []byte
 	GetTokenPair(ctx sdk.Context, id []byte) (erc20types.TokenPair, bool)
 }
+
+type MatchKeeper interface {
+	HasReplay(ctx sdk.Context, poolID, intentID string) bool
+	GetReplayMatchID(ctx sdk.Context, poolID, intentID string) (string, bool)
+	GetReplayParties(ctx sdk.Context, poolID, intentID string) (requester, responder string, found bool)
+}

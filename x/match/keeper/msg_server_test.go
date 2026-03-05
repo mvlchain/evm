@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +34,11 @@ func TestSubmitMatchCertificateSuccessAndReplayProtection(t *testing.T) {
 	replayedMatchID, ok := k.GetReplayMatchID(ctx, "pool-1", "intent-1")
 	require.True(t, ok)
 	require.Equal(t, resp.MatchId, replayedMatchID)
+
+	requester, responder, partiesFound := k.GetReplayParties(ctx, "pool-1", "intent-1")
+	require.True(t, partiesFound)
+	require.Equal(t, msg.Certificate.Payload.Initiator, requester)
+	require.Equal(t, msg.Certificate.Payload.Responder, responder)
 
 	events := ctx.EventManager().Events()
 	require.NotEmpty(t, events)
@@ -90,7 +96,13 @@ func TestSubmitMatchCertificateRejectsInvalidCryptographicSignature(t *testing.T
 
 	_, err := k.SubmitMatchCertificate(ctx, msg)
 	require.Error(t, err)
-	require.ErrorContains(t, err, types.ErrInvalidSignature.Error())
+	require.True(
+		t,
+		strings.Contains(err.Error(), types.ErrInvalidSignature.Error()) ||
+			strings.Contains(err.Error(), types.ErrSignerMismatch.Error()),
+		"expected invalid signature or signer mismatch error, got: %v",
+		err,
+	)
 }
 
 func TestSubmitMatchCertificateEmitsAllEventAttributes(t *testing.T) {

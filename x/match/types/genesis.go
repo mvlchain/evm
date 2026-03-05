@@ -7,9 +7,11 @@ import (
 
 // ReplayIndexEntry stores replay index data for genesis import/export.
 type ReplayIndexEntry struct {
-	PoolId   string `json:"pool_id" yaml:"pool_id"`
-	IntentId string `json:"intent_id" yaml:"intent_id"`
-	MatchId  string `json:"match_id" yaml:"match_id"`
+	PoolId    string `json:"pool_id" yaml:"pool_id"`
+	IntentId  string `json:"intent_id" yaml:"intent_id"`
+	MatchId   string `json:"match_id" yaml:"match_id"`
+	Requester string `json:"requester,omitempty" yaml:"requester,omitempty"`
+	Responder string `json:"responder,omitempty" yaml:"responder,omitempty"`
 }
 
 // GenesisState defines x/match genesis state.
@@ -37,6 +39,9 @@ func (gs GenesisState) Validate() error {
 		}
 		if strings.TrimSpace(replay.MatchId) == "" {
 			return fmt.Errorf("replays[%d].match_id must not be empty", i)
+		}
+		if (strings.TrimSpace(replay.Requester) == "") != (strings.TrimSpace(replay.Responder) == "") {
+			return fmt.Errorf("replays[%d].requester and responder must either both be set or both be empty", i)
 		}
 
 		key := ReplayKeyString(replay.PoolId, replay.IntentId)

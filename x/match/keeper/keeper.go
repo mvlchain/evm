@@ -43,6 +43,12 @@ func (k Keeper) SetReplay(ctx sdk.Context, poolID, intentID, matchID string) {
 	store.Set(types.ReplayIndexStoreKey(poolID, intentID), []byte(matchID))
 }
 
+// SetReplayParties stores requester/responder metadata for (pool_id, intent_id).
+func (k Keeper) SetReplayParties(ctx sdk.Context, poolID, intentID, requester, responder string) {
+	store := ctx.KVStore(k.storeKey)
+	store.Set(types.ReplayPartiesStoreKey(poolID, intentID), types.EncodeReplayPartiesValue(requester, responder))
+}
+
 // GetReplayMatchID returns the stored match_id for (pool_id, intent_id), if present.
 func (k Keeper) GetReplayMatchID(ctx sdk.Context, poolID, intentID string) (string, bool) {
 	store := ctx.KVStore(k.storeKey)
@@ -51,6 +57,21 @@ func (k Keeper) GetReplayMatchID(ctx sdk.Context, poolID, intentID string) (stri
 		return "", false
 	}
 	return string(bz), true
+}
+
+// GetReplayParties returns requester/responder metadata for (pool_id, intent_id), if present.
+func (k Keeper) GetReplayParties(ctx sdk.Context, poolID, intentID string) (requester, responder string, found bool) {
+	store := ctx.KVStore(k.storeKey)
+	bz := store.Get(types.ReplayPartiesStoreKey(poolID, intentID))
+	if len(bz) == 0 {
+		return "", "", false
+	}
+
+	requester, responder, err := types.ParseReplayPartiesValue(bz)
+	if err != nil {
+		return "", "", false
+	}
+	return requester, responder, true
 }
 
 // GetAllReplayEntries returns all replay index entries in deterministic key order.
@@ -71,6 +92,12 @@ func (k Keeper) GetAllReplayEntries(ctx sdk.Context) ([]types.ReplayIndexEntry, 
 			IntentId: intentID,
 			MatchId:  string(iterator.Value()),
 		})
+
+		last := &entries[len(entries)-1]
+		if requester, responder, ok := k.GetReplayParties(ctx, poolID, intentID); ok {
+			last.Requester = requester
+			last.Responder = responder
+		}
 	}
 
 	return entries, nil

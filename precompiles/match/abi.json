@@ -1,0 +1,94 @@
+[
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "poolId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "intentId",
+        "type": "string"
+      }
+    ],
+    "name": "hasReplay",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "exists",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "poolId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "intentId",
+        "type": "string"
+      }
+    ],
+    "name": "getReplay",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "found",
+        "type": "bool"
+      },
+      {
+        "internalType": "string",
+        "name": "matchId",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "string",
+        "name": "poolId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "intentId",
+        "type": "string"
+      }
+    ],
+    "name": "getReplayParties",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "found",
+        "type": "bool"
+      },
+      {
+        "internalType": "string",
+        "name": "matchId",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "requester",
+        "type": "string"
+      },
+      {
+        "internalType": "string",
+        "name": "responder",
+        "type": "string"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]

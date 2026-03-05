@@ -13,6 +13,9 @@ import (
 func InitGenesis(ctx sdk.Context, k keeper.Keeper, data types.GenesisState) {
 	for _, replay := range data.Replays {
 		k.SetReplay(ctx, replay.PoolId, replay.IntentId, replay.MatchId)
+		if replay.Requester != "" && replay.Responder != "" {
+			k.SetReplayParties(ctx, replay.PoolId, replay.IntentId, replay.Requester, replay.Responder)
+		}
 	}
 }
 

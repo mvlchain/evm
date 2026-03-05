@@ -58,6 +58,7 @@ func (k Keeper) SubmitMatchCertificate(
 		matchID = types.BuildMatchID(poolID, intentID, hex.EncodeToString(certificateHash))
 	}
 	k.SetReplay(ctx, poolID, intentID, matchID)
+	k.SetReplayParties(ctx, poolID, intentID, req.Certificate.Payload.Initiator, req.Certificate.Payload.Responder)
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

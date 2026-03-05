@@ -68,6 +68,7 @@ func DefaultStaticPrecompiles(
 	distributionKeeper distributionkeeper.Keeper,
 	bankKeeper cmn.BankKeeper,
 	erc20Keeper *erc20Keeper.Keeper,
+	matchKeeper cmn.MatchKeeper,
 	transferKeeper *transferkeeper.Keeper,
 	channelKeeper *channelkeeper.Keeper,
 	clientKeeper ibcutils.ClientKeeper,
@@ -86,7 +87,8 @@ func DefaultStaticPrecompiles(
 		WithICS20Precompile(bankKeeper, stakingKeeper, transferKeeper, channelKeeper).
 		WithBankPrecompile(bankKeeper, erc20Keeper).
 		WithGovPrecompile(govKeeper, bankKeeper, codec, opts...).
-		WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...)
+		WithSlashingPrecompile(slashingKeeper, bankKeeper, opts...).
+		WithMatchPrecompile(matchKeeper)
 
 	return map[common.Address]vm.PrecompiledContract(precompiles)
 }

@@ -15,6 +15,7 @@ import (
 	govprecompile "github.com/cosmos/evm/precompiles/gov"
 	ics02precompile "github.com/cosmos/evm/precompiles/ics02"
 	ics20precompile "github.com/cosmos/evm/precompiles/ics20"
+	matchprecompile "github.com/cosmos/evm/precompiles/match"
 	"github.com/cosmos/evm/precompiles/p256"
 	slashingprecompile "github.com/cosmos/evm/precompiles/slashing"
 	stakingprecompile "github.com/cosmos/evm/precompiles/staking"
@@ -182,5 +183,11 @@ func (s StaticPrecompiles) WithSlashingPrecompile(
 	)
 
 	s[slashingPrecompile.Address()] = slashingPrecompile
+	return s
+}
+
+func (s StaticPrecompiles) WithMatchPrecompile(matchKeeper cmn.MatchKeeper) StaticPrecompiles {
+	matchPrecompile := matchprecompile.NewPrecompile(matchKeeper)
+	s[matchPrecompile.Address()] = matchPrecompile
 	return s
 }
