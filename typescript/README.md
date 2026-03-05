@@ -4,16 +4,17 @@
 
 ## 준비
 
-1. 체인 노드 실행 (CometBFT RPC)
-2. `matchboard` HTTP 서버 실행
-3. 이 폴더에서 의존성 설치
+1. 체인 노드 실행 (CometBFT RPC + in-process `matchboard`)
+2. 이 폴더에서 의존성 설치
 
-`matchboard` 서버 실행 예시:
+권장 실행:
 
 ```bash
 cd /Users/triggy/evm
-go run ./server/matchboard/cmd/matchboardd
+./local_node.sh -y
 ```
+
+참고: `evmd start`에 `--matchboard.enable=true`가 전달되면 `matchboard`는 노드 프로세스 안에서 같이 기동된다.
 
 ```bash
 cd typescript

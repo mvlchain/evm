@@ -13,13 +13,10 @@ LOGLEVEL="info"
 CHAINDIR="$HOME/.evmd"
 
 BASEFEE=10000000
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Matchboard sidecar configuration
+# Matchboard in-process configuration
 START_MATCHBOARD=true
 MATCHBOARD_ADDR="${MATCHBOARD_ADDR:-:8080}"
-MATCHBOARD_PID=""
-MATCHBOARD_LOG="${MATCHBOARD_LOG:-$HOME/.evmd/matchboard.log}"
 
 # Path variables
 CONFIG_TOML=$CHAINDIR/config/config.toml
@@ -56,7 +53,7 @@ Options:
   --additional-users N     Create N extra users: dev4, dev5, ...
   --mnemonic-file PATH     Where to write mnemonics YAML (default: \$HOME/.evmd/mnemonics.yaml)
   --mnemonics-input PATH   Read dev mnemonics from a yaml file (key: mnemonics:)
-  --no-matchboard          Do not start matchboard sidecar with the node
+  --no-matchboard          Do not enable matchboard with the node
   --matchboard-addr ADDR   Matchboard listen address (default: :8080)
 EOF
 }
@@ -99,7 +96,7 @@ while [[ $# -gt 0 ]]; do
       MNEMONICS_INPUT="$2"; shift 2
       ;;
     --no-matchboard)
-      echo "Flag --no-matchboard passed -> Matchboard sidecar will not be started."
+      echo "Flag --no-matchboard passed -> Matchboard will not be started."
       START_MATCHBOARD=false; shift
       ;;
     --matchboard-addr)
@@ -357,48 +354,23 @@ if [[ $overwrite == "y" || $overwrite == "Y" ]]; then
   fi
 fi
 
-# ---------- Matchboard sidecar ----------
-cleanup_matchboard() {
-  if [[ -n "$MATCHBOARD_PID" ]] && kill -0 "$MATCHBOARD_PID" 2>/dev/null; then
-    echo "stopping matchboard (pid: $MATCHBOARD_PID)"
-    kill "$MATCHBOARD_PID" 2>/dev/null || true
-    wait "$MATCHBOARD_PID" 2>/dev/null || true
-  fi
-}
-
-start_matchboard() {
-  if [[ "$START_MATCHBOARD" != true ]]; then
-    return
-  fi
-
-  command -v go >/dev/null 2>&1 || {
-    echo >&2 "go not installed. required to run matchboard sidecar."
-    exit 1
-  }
-
-  mkdir -p "$(dirname "$MATCHBOARD_LOG")"
-  echo "starting matchboard sidecar at $MATCHBOARD_ADDR (log: $MATCHBOARD_LOG)"
-
-  MATCHBOARD_ADDR="$MATCHBOARD_ADDR" \
-  MATCHBOARD_TOKEN_ALICE="${MATCHBOARD_TOKEN_ALICE:-token-alice}" \
-  MATCHBOARD_TOKEN_BOB="${MATCHBOARD_TOKEN_BOB:-token-bob}" \
-  MATCHBOARD_PRINCIPAL_ALICE="${MATCHBOARD_PRINCIPAL_ALICE:-alice}" \
-  MATCHBOARD_PRINCIPAL_BOB="${MATCHBOARD_PRINCIPAL_BOB:-bob}" \
-  go run "$SCRIPT_DIR/server/matchboard/cmd/matchboardd" >>"$MATCHBOARD_LOG" 2>&1 &
-
-  MATCHBOARD_PID=$!
-}
-
-trap cleanup_matchboard EXIT INT TERM
+MATCHBOARD_ENABLE_FLAG="--matchboard.enable=false"
+MATCHBOARD_ADDR_FLAG=""
+if [[ "$START_MATCHBOARD" == true ]]; then
+  echo "matchboard will run in-process with evmd start (addr: $MATCHBOARD_ADDR)"
+  MATCHBOARD_ENABLE_FLAG="--matchboard.enable=true"
+  MATCHBOARD_ADDR_FLAG="--matchboard.address=$MATCHBOARD_ADDR"
+fi
 
 # Start the node
-start_matchboard
 
 evmd start "$TRACE" \
 	--pruning nothing \
 	--log_level $LOGLEVEL \
 	--minimum-gas-prices=0atest \
 	--evm.min-tip=0 \
+	"$MATCHBOARD_ENABLE_FLAG" \
+	${MATCHBOARD_ADDR_FLAG:+"$MATCHBOARD_ADDR_FLAG"} \
 	--home "$CHAINDIR" \
 	--json-rpc.api eth,txpool,personal,net,debug,web3 \
 	--chain-id "$CHAINID"

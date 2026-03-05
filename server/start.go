@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"strings"
 
 	ethmetricsexp "github.com/ethereum/go-ethereum/metrics/exp"
 	"github.com/spf13/cobra"
@@ -32,6 +34,7 @@ import (
 	ethdebug "github.com/cosmos/evm/rpc/namespaces/ethereum/debug"
 	cosmosevmserverconfig "github.com/cosmos/evm/server/config"
 	srvflags "github.com/cosmos/evm/server/flags"
+	"github.com/cosmos/evm/server/matchboard"
 	servertypes "github.com/cosmos/evm/server/types"
 
 	"cosmossdk.io/log/v2"
@@ -179,6 +182,8 @@ which accepts a path for the resulting pprof file.
 	cmd.Flags().Uint(server.FlagInvCheckPeriod, 0, "Assert registered invariants every N blocks")
 	cmd.Flags().Uint64(server.FlagMinRetainBlocks, 0, "Minimum block height offset during ABCI commit to prune CometBFT blocks")
 	cmd.Flags().String(srvflags.AppDBBackend, "", "The type of database for application and snapshots databases")
+	cmd.Flags().Bool(srvflags.MatchboardEnable, false, "Enable in-process matchboard HTTP server")
+	cmd.Flags().String(srvflags.MatchboardAddress, "", "Matchboard HTTP listen address (falls back to MATCHBOARD_ADDR or :8080)")
 
 	cmd.Flags().Int(server.FlagMempoolMaxTxs, 0, "The maximum number of transactions in the mempool")
 	// explicitly override the app.toml default value, as normally config file takes precedence over flag defaults
@@ -531,6 +536,9 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 	}
 
 	startAPIServer(ctx, svrCtx, clientCtx, g, config.Config, app, grpcSrv, metrics, config.EVM.GethMetricsAddress)
+	if err := maybeStartMatchboard(ctx, g, svrCtx); err != nil {
+		return err
+	}
 
 	if config.JSONRPC.Enable {
 		txApp, ok := app.(AppWithPendingTxStream)
@@ -673,4 +681,32 @@ func GenDocProvider(cfg *cmtcfg.Config) func() (*cmttypes.GenesisDoc, error) {
 
 		return appGenesis.ToGenesisDoc()
 	}
+}
+
+func maybeStartMatchboard(ctx context.Context, g *errgroup.Group, svrCtx *server.Context) error {
+	if !svrCtx.Viper.GetBool(srvflags.MatchboardEnable) {
+		return nil
+	}
+
+	mbLogger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	cfg, err := matchboard.RuntimeConfigFromEnv(mbLogger, os.LookupEnv)
+	if err != nil {
+		return err
+	}
+
+	if addr := strings.TrimSpace(svrCtx.Viper.GetString(srvflags.MatchboardAddress)); addr != "" {
+		cfg.Address = addr
+	}
+
+	svrCtx.Logger.Info("starting in-process matchboard server", "addr", cfg.Address)
+	g.Go(func() error {
+		if err := matchboard.StartServer(ctx, cfg); err != nil {
+			svrCtx.Logger.Error("matchboard server failed", "error", err.Error())
+			return err
+		}
+		svrCtx.Logger.Info("matchboard server stopped")
+		return nil
+	})
+
+	return nil
 }

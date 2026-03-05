@@ -18,6 +18,10 @@ const (
 
 	// AppDBBackend is the type of database for application and snapshots databases
 	AppDBBackend = "app-db-backend"
+
+	// Matchboard flags
+	MatchboardEnable  = "matchboard.enable"
+	MatchboardAddress = "matchboard.address"
 )
 
 // GRPC-related flags.
