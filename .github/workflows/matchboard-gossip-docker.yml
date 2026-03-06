@@ -1,0 +1,75 @@
+name: Matchboard Gossip Docker E2E
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/matchboard-gossip-docker.yml"
+      - "typescript/**"
+      - "server/**"
+      - "evmd/**"
+      - "go.mod"
+      - "go.sum"
+      - "evmd/go.mod"
+      - "evmd/go.sum"
+      - "local_node.sh"
+  merge_group:
+  push:
+    branches:
+      - main
+      - release/**
+
+permissions: read-all
+
+jobs:
+  cleanup-runs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: rokroskar/workflow-run-cleanup-action@master
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+    if: ${{ !startsWith(github.ref, 'refs/tags/') && github.ref != 'refs/heads/main' }}
+
+  gossip-docker-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: technote-space/get-diff-action@v6.1.2
+        with:
+          PATTERNS: |
+            .github/workflows/matchboard-gossip-docker.yml
+            typescript/**
+            server/**
+            evmd/**
+            go.mod
+            go.sum
+            evmd/go.mod
+            evmd/go.sum
+            local_node.sh
+
+      - name: Set up Node.js
+        if: env.GIT_DIFF
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Set up Docker Buildx
+        if: env.GIT_DIFF
+        uses: docker/setup-buildx-action@v3
+
+      - name: Install TypeScript dependencies
+        if: env.GIT_DIFF
+        working-directory: typescript
+        run: npm ci
+
+      - name: Typecheck gossip test harness
+        if: env.GIT_DIFF
+        working-directory: typescript
+        run: npm run typecheck
+
+      - name: Run Docker gossip E2E
+        if: env.GIT_DIFF
+        working-directory: typescript
+        run: npm run test:gossip:docker
+

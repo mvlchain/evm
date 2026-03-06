@@ -38,6 +38,10 @@ Available flags are:
 - `--remote-debugging`: Build a binary suitable for remote debugging
 - `--no-matchboard`: Do not start matchboard sidecar with the node
 - `--matchboard-addr`: Matchboard listen address (default `:8080`)
+- `--matchboard-proposer-abci`: Enable proposer ABCI injection of canonical matchboard operations
+
+When proposer ABCI mode is enabled, injected finalize operations that include `match_certificate`
+bytes are batch-verified via `x/match` in `FinalizeBlock` with atomic rollback semantics.
 
 By default `local_node.sh` also starts the matchboard sidecar at `http://127.0.0.1:8080`.
 

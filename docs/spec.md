@@ -2,7 +2,7 @@
 
 - Status: Draft
 - Spec Version: `v1alpha1`
-- Last Updated: `2026-03-05`
+- Last Updated: `2026-03-06`
 - SSOT: `docs/spec.md` + `proto/match/v1/*.proto`
 - Normative words: `MUST`, `MUST NOT`, `SHOULD`, `MAY`
 
@@ -53,7 +53,7 @@
 | Component | 책임 | 금지 |
 |---|---|---|
 | Signer Client (Maker/Responder) | 서명 가능한 proto payload 구성, deterministic marshal, 서명/검증 | JSON sign-bytes 생성 |
-| Off-chain Board/Server | 게시/조회 API, inbox/outbox 접근제어, rate-limit, certificate 조합 | 서명 위조, 평문 민감정보 로그 저장 |
+| Off-chain Board/Server (memboard) | 게시/조회 API, inbox/outbox 접근제어, rate-limit, short-term operation queue/canonical proposer view | 서명 위조, 평문 민감정보 로그 저장 |
 | Optional On-chain Verifier (`x/match`) | certificate 검증(서명/만료/중복), Match 이벤트 emit | 평문 프로필/메시지 저장 |
 
 ### 3.2 Interface Boundaries
@@ -130,6 +130,70 @@
 상태:
 `OPEN -> RESPONDED -> FINALIZED -> CERTIFIED_OFFCHAIN -> CERTIFIED_ONCHAIN(optional)`
 
+### 7.1 dYdX-style Short-term Path (Matchboard Profile)
+
+`short-term intent/response/finalize`는 기본적으로 **메모리 중심(memboard/memclob profile)** 으로 처리한다.
+
+1. Signed payload(또는 sign-doc hash 바인딩 artifact)는 validator/board 노드 간 전파 가능한 형태여야 한다.
+2. Proposer는 memboard의 pending set에서 **canonical 정렬 규칙**으로 operation batch를 선택해야 한다.
+3. Canonical batch는 all-or-nothing 검증 경로를 가져야 하며, 한 항목이라도 실패하면 전체 batch를 롤백해야 한다.
+4. 온체인에는 최종 검증 통과 결과와 replay 방지용 최소 상태(`(pool_id, intent_id)` 인덱스 + match_id + parties)만 남긴다.
+5. 민감 본문은 계속 오프체인에 두고 체인/이벤트에는 `context_hash` 등 해시만 기록한다.
+
+참고 구현 프로파일(HTTP):
+- `POST /v1/internal/gossip/{intents|responses|finalize}` : peer-to-peer signed payload relay (shared secret 보호)
+- `GET /v1/proposer/operations?limit=N` : canonical 순서의 pending short-term operations 조회
+- `POST /v1/proposer/operations/commit` : proposer가 포함한 operation id 집합을 atomic commit
+- `POST /v1/finalize` 는 선택적으로 `match_certificate`(deterministic protobuf bytes, base64 JSON)를 포함할 수 있으며, proposer-ABCI 경로에서 직접 `x/match` batch 검증에 사용된다.
+
+합의 훅(ABCI) 프로파일:
+- `PrepareProposal`: local canonical pending operations를 proposal 뒤에 app-injected envelope로 추가 가능
+- `ProcessProposal`: injected envelope 디코드/순서/operation_id 재계산/`match_certificate` canonical 검증 후 ACCEPT/REJECT
+- `FinalizeBlock`: injected finalize operation의 `match_certificate`들을 `SubmitMatchCertificateBatch`로 one-fail-all-rollback 검증하고 성공 시 queue commit
+- `matchboard.proposer-abci.enable=true`일 때만 활성화(기본 비활성)
+
+### 7.2 Client Payload Example (`POST /v1/finalize` with `match_certificate`)
+
+`match_certificate`는 JSON에서 **base64** 문자열로 전달한다(바이너리 bytes 필드).
+
+예시:
+
+```bash
+curl -sS -X POST "http://127.0.0.1:8080/v1/finalize" \
+  -H "Authorization: Bearer ${MATCHBOARD_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"pool_id\": \"pool-1\",
+    \"intent_id\": \"intent-1\",
+    \"response_id\": \"response-1\",
+    \"finalize_id\": \"finalize-1\",
+    \"sender\": \"0xYourInitiatorAddress\",
+    \"recipient\": \"0xResponderAddress\",
+    \"expires_unix\": 1767225600,
+    \"digest_algorithm\": \"sha256\",
+    \"intent_sign_hash\": \"<64-hex>\",
+    \"response_sign_hash\": \"<64-hex>\",
+    \"finalize_sign_hash\": \"<64-hex>\",
+    \"context_hash\": \"<64-hex>\",
+    \"initiator_signature\": {
+      \"signer\": \"0xYourInitiatorAddress\",
+      \"algorithm\": \"secp256k1\",
+      \"signature\": \"<130-hex-recoverable-signature>\"
+    },
+    \"responder_signature\": {
+      \"signer\": \"0xResponderAddress\",
+      \"algorithm\": \"secp256k1\",
+      \"signature\": \"<130-hex-recoverable-signature>\"
+    },
+    \"match_certificate\": \"<base64-deterministic-protobuf-match-certificate>\"
+  }"
+```
+
+`match_certificate` 생성 규칙:
+1. `match.v1.MatchCertificate` protobuf 메시지를 deterministic marshal한다.
+2. marshal bytes를 base64 인코딩한다.
+3. payload의 `pool_id/intent_id/response_id/finalize_id` 및 `*_sign_hash/context_hash`는 finalize 요청 본문과 일치해야 한다.
+
 ## 8. Validation Rules
 
 ### 8.1 Common
@@ -148,6 +212,9 @@
 2. inbox/outbox 조회는 대상자 또는 인증 토큰 소유자만 허용
 3. 게시/조회 API에 rate-limit 및 스팸 완화 적용
 4. principal이 EVM 주소일 때 `secp256k1` 서명은 `*_sign_hash` 기준으로 즉시 검증해야 한다
+5. proposer operation 조회는 canonical ordering을 반환해야 하며 노드 간 결정론이 보장되어야 한다
+6. proposer operation 커밋은 all-or-nothing(atomic)이어야 하며, invalid/missing operation이 있으면 전체 롤백해야 한다
+7. `match_certificate`가 제공된 finalize artifact는 deterministic protobuf canonical bytes여야 하며 finalize hash/context와 바인딩되어야 한다
 
 ### 8.3 Optional On-chain Verifier
 
@@ -156,6 +223,7 @@
 3. 만료 확인
 4. 중복 제출(리플레이) 거부
 5. 이벤트에 평문 민감정보 미포함
+6. proposer/batch 경로를 사용할 경우 one-fail-all-rollback 원칙을 유지해야 한다
 
 ## 9. Error Codes
 
@@ -188,6 +256,8 @@
 - [ ] `(pool_id, intent_id)` 재제출 거부 테스트
 - [ ] 만료 거부 테스트
 - [ ] inbox/outbox 접근 권한 테스트
+- [ ] proposer canonical ordering 일관성 테스트
+- [ ] proposer operation atomic rollback 테스트
 - [ ] 체인 이벤트 민감정보 누출 테스트
 
 ## 12. Versioning and Compatibility

@@ -80,3 +80,34 @@ func (k Keeper) SubmitMatchCertificate(
 		ReplayKey:       replayKey,
 	}, nil
 }
+
+// SubmitMatchCertificateBatch applies certificate operations atomically.
+// If any certificate fails validation/replay checks, the whole batch is rolled back.
+func (k Keeper) SubmitMatchCertificateBatch(
+	ctx sdk.Context,
+	submitter string,
+	certificates []types.MatchCertificate,
+) ([]*types.MsgSubmitMatchCertificateResponse, error) {
+	if strings.TrimSpace(submitter) == "" {
+		return nil, errorsmod.Wrap(types.ErrInvalidRequest, "submitter is required")
+	}
+	if len(certificates) == 0 {
+		return nil, errorsmod.Wrap(types.ErrInvalidRequest, "certificates must not be empty")
+	}
+
+	cachedCtx, writeFn := ctx.CacheContext()
+	responses := make([]*types.MsgSubmitMatchCertificateResponse, 0, len(certificates))
+	for idx := range certificates {
+		resp, err := k.SubmitMatchCertificate(cachedCtx, &types.MsgSubmitMatchCertificate{
+			Submitter:   submitter,
+			Certificate: certificates[idx],
+		})
+		if err != nil {
+			return nil, errorsmod.Wrapf(types.ErrChainRejected, "batch certificate %d rejected: %v", idx, err)
+		}
+		responses = append(responses, resp)
+	}
+
+	writeFn()
+	return responses, nil
+}

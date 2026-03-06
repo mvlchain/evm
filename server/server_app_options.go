@@ -154,3 +154,12 @@ func GetCosmosPoolMaxTx(appOpts servertypes.AppOptions, logger log.Logger) int {
 
 	return cast.ToInt(appOpts.Get(sdkserver.FlagMempoolMaxTxs))
 }
+
+// GetMatchboardProposerABCIEnable returns whether proposer operation injection is enabled.
+func GetMatchboardProposerABCIEnable(appOpts servertypes.AppOptions, logger log.Logger) bool {
+	if appOpts == nil {
+		logger.Error("app options is nil, disabling matchboard proposer abci injection")
+		return false
+	}
+	return cast.ToBool(appOpts.Get(srvflags.MatchboardProposerABCIEnable))
+}

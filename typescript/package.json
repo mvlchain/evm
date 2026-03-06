@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "test:match": "tsx src/match.e2e.ts",
+    "test:gossip:docker": "tsx src/gossip.docker.e2e.ts",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {

@@ -15,6 +15,7 @@ import (
 	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
 
 	abci "github.com/cometbft/cometbft/abci/types"
+	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 
 	dbm "github.com/cosmos/cosmos-db"
 	evmante "github.com/cosmos/evm/ante"
@@ -26,6 +27,7 @@ import (
 	precompiletypes "github.com/cosmos/evm/precompiles/types"
 	cosmosevmserver "github.com/cosmos/evm/server"
 	srvflags "github.com/cosmos/evm/server/flags"
+	"github.com/cosmos/evm/server/matchboard"
 	"github.com/cosmos/evm/utils"
 	"github.com/cosmos/evm/x/erc20"
 	erc20keeper "github.com/cosmos/evm/x/erc20/keeper"
@@ -136,7 +138,10 @@ func init() {
 	defaultNodeHome = evmconfig.MustGetDefaultNodeHome()
 }
 
-const appName = "evmd"
+const (
+	appName                    = "evmd"
+	injectedMatchTxSubmitterID = "matchboard-proposer-abci"
+)
 
 // defaultNodeHome default home directories for the application daemon
 var defaultNodeHome string
@@ -187,6 +192,8 @@ type EVMD struct {
 	Erc20Keeper     erc20keeper.Keeper
 	MatchKeeper     matchkeeper.Keeper
 	EVMMempool      *evmmempool.ExperimentalEVMMempool
+	// matchProposerABCIEnabled toggles app-injected match operation handling in ABCI proposal/finalize path.
+	matchProposerABCIEnabled bool
 
 	// the module manager
 	ModuleManager      *module.Manager
@@ -831,7 +838,104 @@ func (app *EVMD) EndBlocker(ctx sdk.Context) (sdk.EndBlock, error) {
 }
 
 func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.ResponseFinalizeBlock, err error) {
-	return app.BaseApp.FinalizeBlock(req)
+	if !app.matchProposerABCIEnabled || req == nil || len(req.Txs) == 0 {
+		return app.BaseApp.FinalizeBlock(req)
+	}
+
+	normalTxs := make([][]byte, 0, len(req.Txs))
+	injectedOps := make(map[int]matchboard.ProposedOperation, len(req.Txs))
+	injectedOrder := make([]int, 0, len(req.Txs))
+	injectedIDs := make([]string, 0)
+	for idx, txBz := range req.Txs {
+		op, matched, decodeErr := matchboard.DecodeABCIInjectedOperation(txBz)
+		if !matched || decodeErr != nil || op.OperationID == "" ||
+			op.OperationID != matchboard.BuildOperationIDFromProposedOperation(op) {
+			normalTxs = append(normalTxs, txBz)
+			continue
+		}
+
+		injectedOps[idx] = op
+		injectedOrder = append(injectedOrder, idx)
+		injectedIDs = append(injectedIDs, op.OperationID)
+	}
+
+	// No valid injected operations discovered, fallback to normal finalize flow.
+	if len(injectedOps) == 0 {
+		return app.BaseApp.FinalizeBlock(req)
+	}
+
+	filteredReq := *req
+	filteredReq.Txs = normalTxs
+	res, err = app.BaseApp.FinalizeBlock(&filteredReq)
+	if err != nil {
+		return res, err
+	}
+
+	certificates := make([]matchtypes.MatchCertificate, 0, len(injectedOps))
+	var injectedErr error
+	for _, idx := range injectedOrder {
+		op := injectedOps[idx]
+		if len(op.MatchCertificate) == 0 {
+			continue
+		}
+		cert, certErr := matchboard.DecodeOperationCertificate(op)
+		if certErr != nil {
+			injectedErr = fmt.Errorf("injected match operation %s certificate decode failed: %w", op.OperationID, certErr)
+			break
+		}
+		if cert != nil {
+			certificates = append(certificates, *cert)
+		}
+	}
+
+	if injectedErr == nil && len(certificates) > 0 {
+		ctx := app.NewContextLegacy(false, cmtproto.Header{
+			Height: req.Height,
+			Time:   req.Time,
+		})
+		if _, submitErr := app.MatchKeeper.SubmitMatchCertificateBatch(ctx, injectedMatchTxSubmitterID, certificates); submitErr != nil {
+			injectedErr = fmt.Errorf("injected match operation batch rejected: %w", submitErr)
+		}
+	}
+
+	mergedResults := make([]*abci.ExecTxResult, len(req.Txs))
+	normalIdx := 0
+	for idx := range req.Txs {
+		if _, ok := injectedOps[idx]; ok {
+			if injectedErr != nil {
+				mergedResults[idx] = &abci.ExecTxResult{
+					Code:      1,
+					Codespace: matchtypes.ModuleName,
+					Log:       injectedErr.Error(),
+					GasWanted: 0,
+					GasUsed:   0,
+				}
+			} else {
+				mergedResults[idx] = &abci.ExecTxResult{
+					Code:      0,
+					GasWanted: 0,
+					GasUsed:   0,
+				}
+			}
+			continue
+		}
+		mergedResults[idx] = res.TxResults[normalIdx]
+		normalIdx++
+	}
+	res.TxResults = mergedResults
+
+	if injectedErr == nil && len(injectedIDs) > 0 {
+		_, _, _, _ = matchboard.CommitABCIProposedOperations(injectedIDs)
+	} else if injectedErr != nil {
+		app.Logger().Warn(
+			"injected match operations rolled back",
+			"height", req.Height,
+			"operations", len(injectedIDs),
+			"error", injectedErr,
+		)
+	}
+
+	return res, nil
 }
 
 func (app *EVMD) Configurator() module.Configurator {

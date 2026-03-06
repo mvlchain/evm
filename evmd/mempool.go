@@ -52,7 +52,19 @@ func (app *EVMD) configureEVMMempool(appOpts servertypes.AppOptions, logger log.
 			sdkmempool.NewDefaultSignerExtractionAdapter(),
 		),
 	)
-	app.SetPrepareProposal(abciProposalHandler.PrepareProposalHandler())
+	prepareHandler := abciProposalHandler.PrepareProposalHandler()
+	processHandler := abciProposalHandler.ProcessProposalHandler()
+
+	app.matchProposerABCIEnabled = server.GetMatchboardProposerABCIEnable(appOpts, logger)
+	if app.matchProposerABCIEnabled {
+		matchHandler := newMatchProposalHandler(prepareHandler, processHandler, logger, defaultInjectedMatchOpsLimit)
+		app.SetPrepareProposal(matchHandler.PrepareProposalHandler())
+		app.SetProcessProposal(matchHandler.ProcessProposalHandler())
+		logger.Info("enabled matchboard proposer abci injection handlers")
+	} else {
+		app.SetPrepareProposal(prepareHandler)
+		app.SetProcessProposal(processHandler)
+	}
 
 	return nil
 }

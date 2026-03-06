@@ -43,6 +43,29 @@ cd typescript
 npm run test:match
 ```
 
+## Docker 기반 Gossip E2E
+
+`evmd` 2개 컨테이너를 Docker Compose로 올린 뒤(in-process matchboard 포함),
+`intent/response/finalize` gossip 전파를 검증한다.
+
+```bash
+cd typescript
+npm run test:gossip:docker
+```
+
+기본 동작:
+- compose 파일: `typescript/docker-compose.matchboard-gossip.yml`
+- node-a matchboard: `http://127.0.0.1:28080`
+- node-b matchboard: `http://127.0.0.1:28081`
+- 테스트 완료 후 컨테이너 자동 정리(`docker compose down -v`)
+
+디버깅용으로 컨테이너를 남기려면:
+
+```bash
+cd typescript
+MATCH_DOCKER_KEEP=1 npm run test:gossip:docker
+```
+
 ## 타입체크
 
 ```bash

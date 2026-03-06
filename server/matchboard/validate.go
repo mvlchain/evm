@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"time"
 
@@ -64,6 +65,35 @@ func normalizeConfig(cfg Config) (Config, error) {
 	}
 	if cfg.NowFn == nil {
 		cfg.NowFn = time.Now
+	}
+
+	normalizedPeers := make([]string, 0, len(cfg.GossipPeers))
+	seenPeers := make(map[string]struct{}, len(cfg.GossipPeers))
+	for _, peer := range cfg.GossipPeers {
+		peer = strings.TrimSpace(peer)
+		if peer == "" {
+			continue
+		}
+		parsed, err := url.Parse(peer)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return Config{}, fmt.Errorf("invalid gossip peer URL %q", peer)
+		}
+		normalized := strings.TrimRight(parsed.String(), "/")
+		if _, exists := seenPeers[normalized]; exists {
+			continue
+		}
+		seenPeers[normalized] = struct{}{}
+		normalizedPeers = append(normalizedPeers, normalized)
+	}
+	cfg.GossipPeers = normalizedPeers
+	cfg.GossipSharedSecret = strings.TrimSpace(cfg.GossipSharedSecret)
+	cfg.GossipNodeID = strings.TrimSpace(cfg.GossipNodeID)
+
+	if cfg.GossipTimeout <= 0 {
+		cfg.GossipTimeout = defaultGossipTimeout
+	}
+	if len(cfg.GossipPeers) > 0 && cfg.GossipSharedSecret == "" {
+		return Config{}, errors.New("gossip peers require gossip shared secret")
 	}
 
 	return cfg, nil
@@ -223,6 +253,51 @@ func validateAndNormalizeFinalize(req *PublishFinalizeRequest, principal string,
 	}
 	if err := validateEthereumSignatureIfRequired("responder_signature", req.FinalizeSignHash, req.Recipient, req.ResponderSignature); err != nil {
 		return err
+	}
+
+	if len(req.MatchCertificate) > 0 {
+		op := ProposedOperation{
+			RecordType:       RecordTypeFinalize,
+			PoolID:           req.PoolID,
+			IntentID:         req.IntentID,
+			ResponseID:       req.ResponseID,
+			FinalizeID:       req.FinalizeID,
+			Sender:           req.Sender,
+			Recipient:        req.Recipient,
+			IntentSignHash:   req.IntentSignHash,
+			ResponseSignHash: req.ResponseSignHash,
+			FinalizeSignHash: req.FinalizeSignHash,
+			MatchCertificate: req.MatchCertificate,
+		}
+		canonical, cert, certErr := NormalizeOperationCertificate(op)
+		if certErr != nil {
+			return &validationError{
+				code:    errorCodeInvalidRequest,
+				field:   "match_certificate",
+				message: "invalid match_certificate",
+				detail:  certErr.Error(),
+			}
+		}
+		if cert != nil && cert.Payload != nil {
+			if err := cert.ValidateForSubmission(nowUnix); err != nil {
+				return &validationError{
+					code:    errorCodeExpired,
+					field:   "match_certificate",
+					message: "match certificate is expired",
+					detail:  err.Error(),
+				}
+			}
+			contextHex := strings.ToLower(hex.EncodeToString(cert.Payload.ContextHash))
+			if contextHex != req.ContextHash {
+				return &validationError{
+					code:    errorCodeHashMismatch,
+					field:   "match_certificate",
+					message: "context hash mismatch",
+					detail:  "match_certificate.payload.context_hash must match context_hash",
+				}
+			}
+		}
+		req.MatchCertificate = canonical
 	}
 
 	return nil

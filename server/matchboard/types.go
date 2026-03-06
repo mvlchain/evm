@@ -11,6 +11,7 @@ const (
 	defaultMaxBodyBytes      = 1 << 20 // 1 MiB
 	defaultPageLimit         = 50
 	defaultMaxPageLimit      = 200
+	defaultGossipTimeout     = 2 * time.Second
 )
 
 const (
@@ -38,9 +39,19 @@ const (
 	errorCodeSignerMismatch     = "ERROR_CODE_SIGNER_MISMATCH"
 	errorCodeInvalidSignature   = "ERROR_CODE_INVALID_SIGNATURE"
 	errorCodeHashMismatch       = "ERROR_CODE_HASH_MISMATCH"
+	errorCodeStateConflict      = "ERROR_CODE_STATE_CONFLICT"
 	errorCodeRateLimited        = "ERROR_CODE_RATE_LIMITED"
 	errorCodeInternal           = "ERROR_CODE_INTERNAL"
 	errorCodeBackendUnavailable = "ERROR_CODE_BACKEND_UNAVAILABLE"
+)
+
+const (
+	headerGossipSecret = "X-Matchboard-Gossip-Secret"
+	headerGossipOrigin = "X-Matchboard-Gossip-Origin"
+)
+
+const (
+	injectedOperationMagic = "MOP1"
 )
 
 var suggestedCodeByError = map[string]string{
@@ -51,6 +62,7 @@ var suggestedCodeByError = map[string]string{
 	errorCodeSignerMismatch:     "MCH-1102",
 	errorCodeInvalidSignature:   "MCH-1101",
 	errorCodeHashMismatch:       "MCH-1200",
+	errorCodeStateConflict:      "MCH-1200",
 	errorCodeRateLimited:        "MCH-1301",
 	errorCodeUnauthorized:       "MCH-1300",
 	errorCodeNotFound:           "MCH-1000",
@@ -83,6 +95,21 @@ type Config struct {
 
 	// NowFn injects time for tests; if nil, time.Now is used.
 	NowFn func() time.Time
+
+	// GossipPeers are peer base URLs that receive best-effort short-term payload gossip.
+	GossipPeers []string
+
+	// GossipSharedSecret authenticates /v1/internal/gossip/* relay requests.
+	GossipSharedSecret string
+
+	// GossipNodeID identifies this node in gossip forwarding logs/headers.
+	GossipNodeID string
+
+	// GossipTimeout bounds one outbound gossip relay request.
+	GossipTimeout time.Duration
+
+	// EnableABCIProposerOps enables app-side proposer operation injection queue bridging.
+	EnableABCIProposerOps bool
 }
 
 // SignatureMetadata captures signature metadata attached to a signed artifact.
@@ -156,6 +183,9 @@ type PublishFinalizeRequest struct {
 
 	InitiatorSignature SignatureMetadata `json:"initiator_signature"`
 	ResponderSignature SignatureMetadata `json:"responder_signature"`
+	// MatchCertificate is an optional deterministic protobuf-encoded match.v1.MatchCertificate blob.
+	// When provided, proposer ABCI injection can directly submit certificates via x/match batch path.
+	MatchCertificate []byte `json:"match_certificate,omitempty"`
 }
 
 // BoardRecord is a redacted list entry for inbox/outbox endpoints.
@@ -203,6 +233,45 @@ type listRecordsResponse struct {
 	Records    []BoardRecord `json:"records"`
 	NextCursor string        `json:"next_cursor,omitempty"`
 	Total      uint64        `json:"total"`
+}
+
+// ProposedOperation is a canonical short-term operation queued for proposer inclusion.
+type ProposedOperation struct {
+	OperationID string `json:"operation_id"`
+	RecordType  string `json:"record_type"`
+
+	PoolID     string `json:"pool_id"`
+	IntentID   string `json:"intent_id"`
+	ResponseID string `json:"response_id,omitempty"`
+	FinalizeID string `json:"finalize_id,omitempty"`
+
+	Sender      string `json:"sender"`
+	Recipient   string `json:"recipient"`
+	CreatedUnix int64  `json:"created_unix"`
+
+	IntentSignHash   string `json:"intent_sign_hash,omitempty"`
+	ResponseSignHash string `json:"response_sign_hash,omitempty"`
+	FinalizeSignHash string `json:"finalize_sign_hash,omitempty"`
+	// MatchCertificate carries optional deterministic protobuf certificate bytes for finalize operations.
+	MatchCertificate []byte `json:"-"`
+}
+
+type listProposedOperationsResponse struct {
+	Proposer           string              `json:"proposer"`
+	Operations         []ProposedOperation `json:"operations"`
+	CanonicalBatchHash string              `json:"canonical_batch_hash"`
+	TotalPending       uint64              `json:"total_pending"`
+}
+
+type commitProposedOperationsRequest struct {
+	OperationIDs []string `json:"operation_ids"`
+}
+
+type commitProposedOperationsResponse struct {
+	Proposer           string `json:"proposer"`
+	Committed          int    `json:"committed"`
+	Remaining          uint64 `json:"remaining"`
+	CanonicalBatchHash string `json:"canonical_batch_hash"`
 }
 
 type errorEnvelope struct {

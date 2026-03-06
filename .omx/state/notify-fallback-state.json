@@ -1,0 +1,9 @@
+{
+  "pid": 44311,
+  "started_at": "2026-03-06T04:09:05.830Z",
+  "cwd": "/Users/triggy/evm",
+  "notify_script": "/Users/triggy/.nvm/versions/node/v24.13.0/lib/node_modules/oh-my-codex/scripts/notify-hook.js",
+  "poll_ms": 700,
+  "tracked_files": 1,
+  "seen_turns": 0
+}

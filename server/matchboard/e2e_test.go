@@ -260,6 +260,206 @@ func TestMatchboardE2ERateLimit(t *testing.T) {
 	require.NoError(t, afterWindow.Body.Close())
 }
 
+func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Unix(1_710_000_900, 0).UTC()
+	h := newMatchboardTestHandler(t, Config{
+		TokenPrincipalMap: map[string]string{
+			testTokenAlice: testPrincipalAlice,
+			testTokenBob:   testPrincipalBob,
+		},
+		NowFn: func() time.Time { return fixedNow },
+	})
+
+	intentReq := PublishIntentRequest{
+		PoolID:          "pool-proposer",
+		IntentID:        "intent-proposer",
+		Sender:          testPrincipalAlice,
+		Recipient:       testPrincipalBob,
+		ExpiresUnix:     fixedNow.Unix() + 600,
+		DigestAlgorithm: DigestAlgorithmSHA256,
+		IntentSignHash:  testHash("9"),
+		ContextHash:     testHash("8"),
+		Signature: SignatureMetadata{
+			Signer:    testPrincipalAlice,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: "sig-intent-proposer",
+		},
+	}
+	intentResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", testTokenAlice, intentReq)
+	require.Equal(t, http.StatusCreated, intentResp.StatusCode)
+	require.NoError(t, intentResp.Body.Close())
+
+	responseReq := PublishResponseRequest{
+		PoolID:           intentReq.PoolID,
+		IntentID:         intentReq.IntentID,
+		ResponseID:       "response-proposer",
+		Sender:           testPrincipalBob,
+		Recipient:        testPrincipalAlice,
+		ExpiresUnix:      fixedNow.Unix() + 600,
+		DigestAlgorithm:  DigestAlgorithmSHA256,
+		IntentSignHash:   intentReq.IntentSignHash,
+		ResponseSignHash: testHash("7"),
+		ContextHash:      testHash("6"),
+		Signature: SignatureMetadata{
+			Signer:    testPrincipalBob,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: "sig-response-proposer",
+		},
+	}
+	responseResp := doJSONRequest(t, h, http.MethodPost, "/v1/responses", testTokenBob, responseReq)
+	require.Equal(t, http.StatusCreated, responseResp.StatusCode)
+	require.NoError(t, responseResp.Body.Close())
+
+	finalizeReq := PublishFinalizeRequest{
+		PoolID:           intentReq.PoolID,
+		IntentID:         intentReq.IntentID,
+		ResponseID:       responseReq.ResponseID,
+		FinalizeID:       "finalize-proposer",
+		Sender:           testPrincipalAlice,
+		Recipient:        testPrincipalBob,
+		ExpiresUnix:      fixedNow.Unix() + 600,
+		DigestAlgorithm:  DigestAlgorithmSHA256,
+		IntentSignHash:   intentReq.IntentSignHash,
+		ResponseSignHash: responseReq.ResponseSignHash,
+		FinalizeSignHash: testHash("5"),
+		ContextHash:      testHash("4"),
+		InitiatorSignature: SignatureMetadata{
+			Signer:    testPrincipalAlice,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: "sig-finalize-initiator-proposer",
+		},
+		ResponderSignature: SignatureMetadata{
+			Signer:    testPrincipalBob,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: "sig-finalize-responder-proposer",
+		},
+	}
+	finalizeResp := doJSONRequest(t, h, http.MethodPost, "/v1/finalize", testTokenAlice, finalizeReq)
+	require.Equal(t, http.StatusCreated, finalizeResp.StatusCode)
+	require.NoError(t, finalizeResp.Body.Close())
+
+	listResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	require.Equal(t, http.StatusOK, listResp.StatusCode)
+	listed := decodeJSONResponse[listProposedOperationsResponse](t, listResp)
+	require.Equal(t, testPrincipalAlice, listed.Proposer)
+	require.Len(t, listed.Operations, 3)
+	require.EqualValues(t, 3, listed.TotalPending)
+	require.NotEmpty(t, listed.CanonicalBatchHash)
+
+	for i := 1; i < len(listed.Operations); i++ {
+		require.Less(t, listed.Operations[i-1].OperationID, listed.Operations[i].OperationID)
+	}
+
+	opIDs := make([]string, len(listed.Operations))
+	for i := range listed.Operations {
+		opIDs[i] = listed.Operations[i].OperationID
+	}
+
+	rollbackResp := doJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/v1/proposer/operations/commit",
+		testTokenAlice,
+		commitProposedOperationsRequest{
+			OperationIDs: []string{opIDs[0], strings.Repeat("f", 64)},
+		},
+	)
+	require.Equal(t, http.StatusConflict, rollbackResp.StatusCode)
+	rollbackErr := decodeJSONResponse[errorEnvelope](t, rollbackResp)
+	require.Equal(t, errorCodeStateConflict, rollbackErr.Error.Code)
+
+	listAfterRollbackResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	require.Equal(t, http.StatusOK, listAfterRollbackResp.StatusCode)
+	listAfterRollback := decodeJSONResponse[listProposedOperationsResponse](t, listAfterRollbackResp)
+	require.Len(t, listAfterRollback.Operations, 3)
+	require.EqualValues(t, 3, listAfterRollback.TotalPending)
+	require.Equal(t, listed.CanonicalBatchHash, listAfterRollback.CanonicalBatchHash)
+
+	commitResp := doJSONRequest(
+		t,
+		h,
+		http.MethodPost,
+		"/v1/proposer/operations/commit",
+		testTokenAlice,
+		commitProposedOperationsRequest{OperationIDs: opIDs},
+	)
+	require.Equal(t, http.StatusOK, commitResp.StatusCode)
+	commitResult := decodeJSONResponse[commitProposedOperationsResponse](t, commitResp)
+	require.Equal(t, testPrincipalAlice, commitResult.Proposer)
+	require.Equal(t, len(opIDs), commitResult.Committed)
+	require.EqualValues(t, 0, commitResult.Remaining)
+	require.Empty(t, commitResult.CanonicalBatchHash)
+
+	emptyResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	require.Equal(t, http.StatusOK, emptyResp.StatusCode)
+	emptyListed := decodeJSONResponse[listProposedOperationsResponse](t, emptyResp)
+	require.EqualValues(t, 0, emptyListed.TotalPending)
+	require.Len(t, emptyListed.Operations, 0)
+	require.Empty(t, emptyListed.CanonicalBatchHash)
+}
+
+func TestMatchboardSignedPayloadGossipReplication(t *testing.T) {
+	t.Parallel()
+
+	fixedNow := time.Unix(1_710_001_200, 0).UTC()
+	const gossipSecret = "gossip-secret"
+
+	nodeB := newMatchboardTestHandler(t, Config{
+		TokenPrincipalMap: map[string]string{
+			testTokenAlice: testPrincipalAlice,
+			testTokenBob:   testPrincipalBob,
+		},
+		NowFn:              func() time.Time { return fixedNow },
+		GossipSharedSecret: gossipSecret,
+		GossipNodeID:       "node-b",
+	})
+	nodeBServer := httptest.NewServer(nodeB)
+	defer nodeBServer.Close()
+
+	nodeA := newMatchboardTestHandler(t, Config{
+		TokenPrincipalMap: map[string]string{
+			testTokenAlice: testPrincipalAlice,
+			testTokenBob:   testPrincipalBob,
+		},
+		NowFn:              func() time.Time { return fixedNow },
+		GossipPeers:        []string{nodeBServer.URL},
+		GossipSharedSecret: gossipSecret,
+		GossipNodeID:       "node-a",
+	})
+
+	intentReq := PublishIntentRequest{
+		PoolID:          "pool-gossip",
+		IntentID:        "intent-gossip",
+		Sender:          testPrincipalAlice,
+		Recipient:       testPrincipalBob,
+		ExpiresUnix:     fixedNow.Unix() + 600,
+		DigestAlgorithm: DigestAlgorithmSHA256,
+		IntentSignHash:  testHash("a"),
+		ContextHash:     testHash("b"),
+		Signature: SignatureMetadata{
+			Signer:    testPrincipalAlice,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: "sig-gossip-intent",
+		},
+	}
+	publishResp := doJSONRequest(t, nodeA, http.MethodPost, "/v1/intents", testTokenAlice, intentReq)
+	require.Equal(t, http.StatusCreated, publishResp.StatusCode)
+	require.NoError(t, publishResp.Body.Close())
+
+	bobInboxResp := doJSONRequest(t, nodeB, http.MethodGet, "/v1/inbox", testTokenBob, nil)
+	require.Equal(t, http.StatusOK, bobInboxResp.StatusCode)
+	bobInbox := decodeJSONResponse[listRecordsResponse](t, bobInboxResp)
+	require.Equal(t, testPrincipalBob, bobInbox.Principal)
+	require.Len(t, bobInbox.Records, 1)
+	require.Equal(t, RecordTypeIntent, bobInbox.Records[0].RecordType)
+	require.Equal(t, intentReq.PoolID, bobInbox.Records[0].PoolID)
+	require.Equal(t, intentReq.IntentID, bobInbox.Records[0].IntentID)
+	require.Equal(t, intentReq.IntentSignHash, bobInbox.Records[0].IntentSignHash)
+}
+
 func newMatchboardTestHandler(t *testing.T, cfg Config) http.Handler {
 	t.Helper()
 

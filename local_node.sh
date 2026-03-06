@@ -17,6 +17,7 @@ BASEFEE=10000000
 # Matchboard in-process configuration
 START_MATCHBOARD=true
 MATCHBOARD_ADDR="${MATCHBOARD_ADDR:-:8080}"
+MATCHBOARD_PROPOSER_ABCI_ENABLE=false
 
 # Path variables
 CONFIG_TOML=$CHAINDIR/config/config.toml
@@ -55,6 +56,7 @@ Options:
   --mnemonics-input PATH   Read dev mnemonics from a yaml file (key: mnemonics:)
   --no-matchboard          Do not enable matchboard with the node
   --matchboard-addr ADDR   Matchboard listen address (default: :8080)
+  --matchboard-proposer-abci  Enable ABCI proposer operation injection
 EOF
 }
 
@@ -104,6 +106,10 @@ while [[ $# -gt 0 ]]; do
         echo "Error: --matchboard-addr requires an address."; usage; exit 1
       fi
       MATCHBOARD_ADDR="$2"; shift 2
+      ;;
+    --matchboard-proposer-abci)
+      echo "Flag --matchboard-proposer-abci passed -> enabling proposer ABCI injection."
+      MATCHBOARD_PROPOSER_ABCI_ENABLE=true; shift
       ;;
     -h|--help)
       usage; exit 0
@@ -356,10 +362,14 @@ fi
 
 MATCHBOARD_ENABLE_FLAG="--matchboard.enable=false"
 MATCHBOARD_ADDR_FLAG=""
+MATCHBOARD_PROPOSER_ABCI_FLAG="--matchboard.proposer-abci.enable=false"
 if [[ "$START_MATCHBOARD" == true ]]; then
   echo "matchboard will run in-process with evmd start (addr: $MATCHBOARD_ADDR)"
   MATCHBOARD_ENABLE_FLAG="--matchboard.enable=true"
   MATCHBOARD_ADDR_FLAG="--matchboard.address=$MATCHBOARD_ADDR"
+  if [[ "$MATCHBOARD_PROPOSER_ABCI_ENABLE" == true ]]; then
+    MATCHBOARD_PROPOSER_ABCI_FLAG="--matchboard.proposer-abci.enable=true"
+  fi
 fi
 
 # Start the node
@@ -370,6 +380,7 @@ evmd start "$TRACE" \
 	--minimum-gas-prices=0atest \
 	--evm.min-tip=0 \
 	"$MATCHBOARD_ENABLE_FLAG" \
+	"$MATCHBOARD_PROPOSER_ABCI_FLAG" \
 	${MATCHBOARD_ADDR_FLAG:+"$MATCHBOARD_ADDR_FLAG"} \
 	--home "$CHAINDIR" \
 	--json-rpc.api eth,txpool,personal,net,debug,web3 \

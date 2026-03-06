@@ -266,6 +266,58 @@ func TestEthereumAddressSignatureVerification(t *testing.T) {
 	assertErrorEnvelope(t, badResp.Body.Bytes(), errorCodeInvalidSignature, "signature.signature")
 }
 
+func TestInternalGossipAuthEnforcement(t *testing.T) {
+	t.Parallel()
+
+	h, err := NewHandler(Config{
+		TokenPrincipalMap: map[string]string{
+			tokenAlice: "alice",
+			tokenBob:   "bob",
+		},
+		NowFn:              func() time.Time { return securityNow },
+		GossipSharedSecret: "gossip-secret",
+	})
+	require.NoError(t, err)
+
+	payload := mustJSON(t, map[string]any{
+		"pool_id":          "pool-gossip-auth",
+		"intent_id":        "intent-gossip-auth",
+		"sender":           "alice",
+		"recipient":        "bob",
+		"expires_unix":     securityNow.Unix() + 300,
+		"digest_algorithm": DigestAlgorithmSHA256,
+		"intent_sign_hash": hashChar('c'),
+		"context_hash":     hashChar('d'),
+		"signature": map[string]any{
+			"signer":    "alice",
+			"algorithm": SignatureAlgorithmSecp256k1,
+			"signature": "sig-alice",
+		},
+	})
+
+	reqNoSecret := httptest.NewRequest(http.MethodPost, "/v1/internal/gossip/intents", bytes.NewReader(payload))
+	reqNoSecret.Header.Set("Content-Type", "application/json")
+	noSecretResp := httptest.NewRecorder()
+	h.ServeHTTP(noSecretResp, reqNoSecret)
+	require.Equal(t, http.StatusUnauthorized, noSecretResp.Code)
+	assertErrorEnvelope(t, noSecretResp.Body.Bytes(), errorCodeUnauthorized, headerGossipSecret)
+
+	reqWrongSecret := httptest.NewRequest(http.MethodPost, "/v1/internal/gossip/intents", bytes.NewReader(payload))
+	reqWrongSecret.Header.Set("Content-Type", "application/json")
+	reqWrongSecret.Header.Set(headerGossipSecret, "wrong-secret")
+	wrongSecretResp := httptest.NewRecorder()
+	h.ServeHTTP(wrongSecretResp, reqWrongSecret)
+	require.Equal(t, http.StatusUnauthorized, wrongSecretResp.Code)
+	assertErrorEnvelope(t, wrongSecretResp.Body.Bytes(), errorCodeUnauthorized, headerGossipSecret)
+
+	reqOK := httptest.NewRequest(http.MethodPost, "/v1/internal/gossip/intents", bytes.NewReader(payload))
+	reqOK.Header.Set("Content-Type", "application/json")
+	reqOK.Header.Set(headerGossipSecret, "gossip-secret")
+	okResp := httptest.NewRecorder()
+	h.ServeHTTP(okResp, reqOK)
+	require.Equal(t, http.StatusCreated, okResp.Code)
+}
+
 var securityNow = time.Unix(1_700_000_000, 0)
 
 const (

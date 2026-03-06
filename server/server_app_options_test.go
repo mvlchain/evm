@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	srvflags "github.com/cosmos/evm/server/flags"
 	"github.com/stretchr/testify/require"
 
 	"cosmossdk.io/log/v2"
@@ -228,6 +229,17 @@ func TestGetMinGasPrices(t *testing.T) {
 			require.Equal(t, tc.expected, result, "GetMinGasPrices returned unexpected value")
 		})
 	}
+}
+
+func TestGetMatchboardProposerABCIEnable(t *testing.T) {
+	t.Parallel()
+
+	logger := log.NewNopLogger()
+	opts := newMockAppOptions()
+	require.False(t, GetMatchboardProposerABCIEnable(opts, logger))
+
+	opts.Set(srvflags.MatchboardProposerABCIEnable, true)
+	require.True(t, GetMatchboardProposerABCIEnable(opts, logger))
 }
 
 func createGenesisWithMaxGas(t *testing.T, maxGas int64) string {

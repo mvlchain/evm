@@ -138,6 +138,32 @@ func TestSubmitMatchCertificateEmitsAllEventAttributes(t *testing.T) {
 	require.Equal(t, expected, attrs)
 }
 
+func TestSubmitMatchCertificateBatchSuccess(t *testing.T) {
+	k, ctx := setupKeeper(t)
+	msg := validSubmitMessage(ctx.BlockTime().Unix())
+
+	responses, err := k.SubmitMatchCertificateBatch(ctx, msg.Submitter, []types.MatchCertificate{
+		msg.Certificate,
+	})
+	require.NoError(t, err)
+	require.Len(t, responses, 1)
+	require.Equal(t, types.ReplayKeyString("pool-1", "intent-1"), responses[0].ReplayKey)
+	require.True(t, k.HasReplay(ctx, "pool-1", "intent-1"))
+}
+
+func TestSubmitMatchCertificateBatchRollbackOnFailure(t *testing.T) {
+	k, ctx := setupKeeper(t)
+	msg := validSubmitMessage(ctx.BlockTime().Unix())
+
+	_, err := k.SubmitMatchCertificateBatch(ctx, msg.Submitter, []types.MatchCertificate{
+		msg.Certificate,
+		msg.Certificate, // duplicate replay key inside batch should fail entire batch.
+	})
+	require.Error(t, err)
+	require.ErrorContains(t, err, types.ErrChainRejected.Error())
+	require.False(t, k.HasReplay(ctx, "pool-1", "intent-1"), "batch must rollback on any certificate failure")
+}
+
 func setupKeeper(t *testing.T) (matchkeeper.Keeper, sdk.Context) {
 	t.Helper()
 

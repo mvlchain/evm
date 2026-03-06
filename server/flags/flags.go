@@ -20,8 +20,9 @@ const (
 	AppDBBackend = "app-db-backend"
 
 	// Matchboard flags
-	MatchboardEnable  = "matchboard.enable"
-	MatchboardAddress = "matchboard.address"
+	MatchboardEnable             = "matchboard.enable"
+	MatchboardAddress            = "matchboard.address"
+	MatchboardProposerABCIEnable = "matchboard.proposer-abci.enable"
 )
 
 // GRPC-related flags.

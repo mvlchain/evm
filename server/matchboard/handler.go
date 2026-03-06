@@ -20,8 +20,11 @@ func NewHandler(cfg Config) (http.Handler, error) {
 
 	h := &handler{
 		cfg:         normalized,
-		store:       newInMemoryStore(),
+		store:       newInMemoryStore(normalized.EnableABCIProposerOps),
 		rateLimiter: newFixedWindowRateLimiter(normalized.RateLimitRequests, normalized.RateLimitWindow),
+		gossipClient: &http.Client{
+			Timeout: normalized.GossipTimeout,
+		},
 	}
 
 	mux := http.NewServeMux()
@@ -30,17 +33,26 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	mux.HandleFunc("/v1/finalize", h.withAuth(h.handlePublishFinalize))
 	mux.HandleFunc("/v1/inbox", h.withAuth(h.handleInbox))
 	mux.HandleFunc("/v1/outbox", h.withAuth(h.handleOutbox))
+	mux.HandleFunc("/v1/proposer/operations", h.withAuth(h.handleListProposedOperations))
+	mux.HandleFunc("/v1/proposer/operations/commit", h.withAuth(h.handleCommitProposedOperations))
+	if normalized.GossipSharedSecret != "" {
+		mux.HandleFunc("/v1/internal/gossip/intents", h.withGossipAuth(h.handleGossipIntent))
+		mux.HandleFunc("/v1/internal/gossip/responses", h.withGossipAuth(h.handleGossipResponse))
+		mux.HandleFunc("/v1/internal/gossip/finalize", h.withGossipAuth(h.handleGossipFinalize))
+	}
 
 	return mux, nil
 }
 
 type handler struct {
-	cfg         Config
-	store       *inMemoryStore
-	rateLimiter *fixedWindowRateLimiter
+	cfg          Config
+	store        *inMemoryStore
+	rateLimiter  *fixedWindowRateLimiter
+	gossipClient *http.Client
 }
 
 type authedHandler func(http.ResponseWriter, *http.Request, string)
+type gossipHandler func(http.ResponseWriter, *http.Request)
 
 func (h *handler) withAuth(next authedHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +71,18 @@ func (h *handler) withAuth(next authedHandler) http.HandlerFunc {
 		}
 
 		next(w, r, principal)
+	}
+}
+
+func (h *handler) withGossipAuth(next gossipHandler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		secret := strings.TrimSpace(r.Header.Get(headerGossipSecret))
+		if secret == "" || secret != h.cfg.GossipSharedSecret {
+			h.cfg.Logger.Warn("matchboard gossip request rejected", "status", "unauthorized", "path", r.URL.Path)
+			h.writeError(w, http.StatusUnauthorized, errorCodeUnauthorized, "missing or invalid gossip secret", headerGossipSecret, "", false)
+			return
+		}
+		next(w, r)
 	}
 }
 
@@ -92,6 +116,7 @@ func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request, pr
 		"intent_id", req.IntentID,
 		"intent_sign_hash", req.IntentSignHash,
 	)
+	h.gossipPayload(r, "/v1/internal/gossip/intents", req)
 	h.writeJSON(w, http.StatusCreated, result)
 }
 
@@ -126,6 +151,7 @@ func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request, 
 		"response_id", req.ResponseID,
 		"response_sign_hash", req.ResponseSignHash,
 	)
+	h.gossipPayload(r, "/v1/internal/gossip/responses", req)
 	h.writeJSON(w, http.StatusCreated, result)
 }
 
@@ -160,6 +186,139 @@ func (h *handler) handlePublishFinalize(w http.ResponseWriter, r *http.Request, 
 		"response_id", req.ResponseID,
 		"finalize_id", req.FinalizeID,
 		"finalize_sign_hash", req.FinalizeSignHash,
+	)
+	h.gossipPayload(r, "/v1/internal/gossip/finalize", req)
+	h.writeJSON(w, http.StatusCreated, result)
+}
+
+func (h *handler) handleGossipIntent(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req PublishIntentRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	nowUnix := h.cfg.NowFn().Unix()
+	if err := validateAndNormalizeIntent(&req, req.Sender, nowUnix); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	result, err := h.store.createIntent(req, nowUnix)
+	if err != nil {
+		if errors.Is(err, errIntentExists) {
+			h.writeJSON(w, http.StatusOK, publishIntentResponse{
+				PoolID:         req.PoolID,
+				IntentID:       req.IntentID,
+				IntentSignHash: req.IntentSignHash,
+				StoredUnix:     nowUnix,
+			})
+			return
+		}
+		h.handleStoreError(w, err, "intent", req.PoolID, req.IntentID, req.IntentSignHash)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard intent gossiped",
+		"status", "stored",
+		"pool_id", req.PoolID,
+		"intent_id", req.IntentID,
+		"intent_sign_hash", req.IntentSignHash,
+		"origin", strings.TrimSpace(r.Header.Get(headerGossipOrigin)),
+	)
+	h.writeJSON(w, http.StatusCreated, result)
+}
+
+func (h *handler) handleGossipResponse(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req PublishResponseRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	nowUnix := h.cfg.NowFn().Unix()
+	if err := validateAndNormalizeResponse(&req, req.Sender, nowUnix); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	result, err := h.store.createResponse(req, nowUnix)
+	if err != nil {
+		if errors.Is(err, errResponseExists) {
+			h.writeJSON(w, http.StatusOK, publishResponseResponse{
+				PoolID:           req.PoolID,
+				IntentID:         req.IntentID,
+				ResponseID:       req.ResponseID,
+				ResponseSignHash: req.ResponseSignHash,
+				StoredUnix:       nowUnix,
+			})
+			return
+		}
+		h.handleStoreError(w, err, "response", req.PoolID, req.IntentID, req.ResponseSignHash)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard response gossiped",
+		"status", "stored",
+		"pool_id", req.PoolID,
+		"intent_id", req.IntentID,
+		"response_id", req.ResponseID,
+		"response_sign_hash", req.ResponseSignHash,
+		"origin", strings.TrimSpace(r.Header.Get(headerGossipOrigin)),
+	)
+	h.writeJSON(w, http.StatusCreated, result)
+}
+
+func (h *handler) handleGossipFinalize(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req PublishFinalizeRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	nowUnix := h.cfg.NowFn().Unix()
+	if err := validateAndNormalizeFinalize(&req, req.Sender, nowUnix); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	result, err := h.store.createFinalize(req, nowUnix)
+	if err != nil {
+		if errors.Is(err, errFinalizeExists) {
+			h.writeJSON(w, http.StatusOK, publishFinalizeResponse{
+				PoolID:           req.PoolID,
+				IntentID:         req.IntentID,
+				ResponseID:       req.ResponseID,
+				FinalizeID:       req.FinalizeID,
+				FinalizeSignHash: req.FinalizeSignHash,
+				StoredUnix:       nowUnix,
+			})
+			return
+		}
+		h.handleStoreError(w, err, "finalize", req.PoolID, req.IntentID, req.FinalizeSignHash)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard finalize gossiped",
+		"status", "stored",
+		"pool_id", req.PoolID,
+		"intent_id", req.IntentID,
+		"response_id", req.ResponseID,
+		"finalize_id", req.FinalizeID,
+		"finalize_sign_hash", req.FinalizeSignHash,
+		"origin", strings.TrimSpace(r.Header.Get(headerGossipOrigin)),
 	)
 	h.writeJSON(w, http.StatusCreated, result)
 }
@@ -242,6 +401,87 @@ func (h *handler) handleOutbox(w http.ResponseWriter, r *http.Request, principal
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Request, principal string) {
+	if !h.requireMethod(w, r, http.MethodGet) {
+		return
+	}
+
+	limit, err := h.parseLimit(r)
+	if err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	operations, canonicalBatchHash, totalPending := h.store.listProposedOperations(limit)
+	resp := listProposedOperationsResponse{
+		Proposer:           principal,
+		Operations:         operations,
+		CanonicalBatchHash: canonicalBatchHash,
+		TotalPending:       totalPending,
+	}
+
+	h.cfg.Logger.Info("matchboard proposer operations listed",
+		"status", "ok",
+		"principal", principal,
+		"operation_count", len(operations),
+		"total_pending", totalPending,
+		"canonical_batch_hash", canonicalBatchHash,
+	)
+	h.writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.Request, principal string) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req commitProposedOperationsRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+	if len(req.OperationIDs) == 0 {
+		h.writeError(w, http.StatusBadRequest, errorCodeInvalidRequest, "operation_ids must include at least one id", "operation_ids", "", false)
+		return
+	}
+
+	committed, remaining, canonicalBatchHash, err := h.store.commitProposedOperations(req.OperationIDs)
+	if err != nil {
+		h.cfg.Logger.Warn("matchboard proposer operation commit rejected",
+			"status", "rejected",
+			"principal", principal,
+			"reason", err.Error(),
+		)
+		switch {
+		case errors.Is(err, errOperationEmpty):
+			h.writeError(w, http.StatusBadRequest, errorCodeInvalidRequest, "operation_ids must not contain empty values", "operation_ids", "", false)
+		case errors.Is(err, errOperationDuplicate):
+			h.writeError(w, http.StatusConflict, errorCodeStateConflict, "duplicate operation id in request", "operation_ids", "", false)
+		case errors.Is(err, errOperationNotFound):
+			h.writeError(w, http.StatusConflict, errorCodeStateConflict, "operation commit failed and rolled back", "operation_ids", "operation id not found in pending set", false)
+		default:
+			h.writeError(w, http.StatusInternalServerError, errorCodeInternal, "internal error", "", "", true)
+		}
+		return
+	}
+
+	resp := commitProposedOperationsResponse{
+		Proposer:           principal,
+		Committed:          committed,
+		Remaining:          remaining,
+		CanonicalBatchHash: canonicalBatchHash,
+	}
+
+	h.cfg.Logger.Info("matchboard proposer operation commit applied",
+		"status", "ok",
+		"principal", principal,
+		"committed", committed,
+		"remaining", remaining,
+		"canonical_batch_hash", canonicalBatchHash,
+	)
+	h.writeJSON(w, http.StatusOK, resp)
+}
+
 func (h *handler) parsePagination(r *http.Request) (int, int, error) {
 	query := r.URL.Query()
 
@@ -267,6 +507,23 @@ func (h *handler) parsePagination(r *http.Request) (int, int, error) {
 	}
 
 	return cursor, limit, nil
+}
+
+func (h *handler) parseLimit(r *http.Request) (int, error) {
+	limit := h.cfg.DefaultPageLimit
+	raw := strings.TrimSpace(r.URL.Query().Get("limit"))
+	if raw == "" {
+		return limit, nil
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil || v <= 0 {
+		return 0, &validationError{code: errorCodeInvalidRequest, field: "limit", message: "limit must be a positive integer"}
+	}
+	if v > h.cfg.MaxPageLimit {
+		return h.cfg.MaxPageLimit, nil
+	}
+	return v, nil
 }
 
 func (h *handler) authenticatePrincipal(r *http.Request) (string, bool) {
@@ -392,5 +649,49 @@ func (h *handler) writeJSON(w http.ResponseWriter, status int, payload any) {
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		h.cfg.Logger.Error("matchboard failed to write JSON response", "status", "write_failed", "code", status)
+	}
+}
+
+func (h *handler) gossipPayload(r *http.Request, gossipPath string, payload any) {
+	if len(h.cfg.GossipPeers) == 0 || h.cfg.GossipSharedSecret == "" {
+		return
+	}
+	// Don't relay payloads received from gossip peers.
+	if strings.TrimSpace(r.Header.Get(headerGossipOrigin)) != "" {
+		return
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		h.cfg.Logger.Warn("matchboard gossip marshal failed", "path", gossipPath, "error", err.Error())
+		return
+	}
+
+	origin := h.cfg.GossipNodeID
+	if origin == "" {
+		origin = "matchboard"
+	}
+
+	for _, peer := range h.cfg.GossipPeers {
+		url := peer + gossipPath
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, url, bytes.NewReader(body))
+		if err != nil {
+			h.cfg.Logger.Warn("matchboard gossip request build failed", "peer", peer, "path", gossipPath, "error", err.Error())
+			continue
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(headerGossipSecret, h.cfg.GossipSharedSecret)
+		req.Header.Set(headerGossipOrigin, origin)
+
+		resp, err := h.gossipClient.Do(req)
+		if err != nil {
+			h.cfg.Logger.Warn("matchboard gossip relay failed", "peer", peer, "path", gossipPath, "error", err.Error())
+			continue
+		}
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 32<<10))
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusMultipleChoices {
+			h.cfg.Logger.Warn("matchboard gossip relay rejected", "peer", peer, "path", gossipPath, "status_code", resp.StatusCode)
+		}
 	}
 }

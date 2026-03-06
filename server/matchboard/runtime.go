@@ -51,14 +51,30 @@ func RuntimeConfigFromEnv(logger *slog.Logger, lookupEnv func(string) (string, b
 	if err != nil {
 		return RuntimeConfig{}, fmt.Errorf("invalid MATCHBOARD_RATE_LIMIT_WINDOW: %w", err)
 	}
+	gossipPeers := csvEnv(lookupEnv, "MATCHBOARD_GOSSIP_PEERS")
+	gossipSecret := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_GOSSIP_SHARED_SECRET", ""))
+	gossipNodeID := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_GOSSIP_NODE_ID", ""))
+	gossipTimeout, err := durationEnv(lookupEnv, "MATCHBOARD_GOSSIP_TIMEOUT", defaultGossipTimeout)
+	if err != nil {
+		return RuntimeConfig{}, fmt.Errorf("invalid MATCHBOARD_GOSSIP_TIMEOUT: %w", err)
+	}
+	proposerABCIEnable, err := boolEnv(lookupEnv, "MATCHBOARD_PROPOSER_ABCI_ENABLE", false)
+	if err != nil {
+		return RuntimeConfig{}, fmt.Errorf("invalid MATCHBOARD_PROPOSER_ABCI_ENABLE: %w", err)
+	}
 
 	return RuntimeConfig{
 		Address: addr,
 		Handler: Config{
-			TokenPrincipalMap: tokenMap,
-			RateLimitRequests: rateLimitRequests,
-			RateLimitWindow:   rateLimitWindow,
-			Logger:            logger,
+			TokenPrincipalMap:     tokenMap,
+			RateLimitRequests:     rateLimitRequests,
+			RateLimitWindow:       rateLimitWindow,
+			Logger:                logger,
+			GossipPeers:           gossipPeers,
+			GossipSharedSecret:    gossipSecret,
+			GossipNodeID:          gossipNodeID,
+			GossipTimeout:         gossipTimeout,
+			EnableABCIProposerOps: proposerABCIEnable,
 		},
 	}, nil
 }
@@ -196,4 +212,36 @@ func getEnvWithDefault(lookupEnv func(string) (string, bool), key, fallback stri
 		return fallback
 	}
 	return raw
+}
+
+func csvEnv(lookupEnv func(string) (string, bool), key string) []string {
+	raw := strings.TrimSpace(getEnvWithDefault(lookupEnv, key, ""))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func boolEnv(lookupEnv func(string) (string, bool), key string, fallback bool) (bool, error) {
+	raw := strings.TrimSpace(getEnvWithDefault(lookupEnv, key, ""))
+	if raw == "" {
+		return fallback, nil
+	}
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, err
+	}
+	return v, nil
 }

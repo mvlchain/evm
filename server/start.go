@@ -184,6 +184,7 @@ which accepts a path for the resulting pprof file.
 	cmd.Flags().String(srvflags.AppDBBackend, "", "The type of database for application and snapshots databases")
 	cmd.Flags().Bool(srvflags.MatchboardEnable, false, "Enable in-process matchboard HTTP server")
 	cmd.Flags().String(srvflags.MatchboardAddress, "", "Matchboard HTTP listen address (falls back to MATCHBOARD_ADDR or :8080)")
+	cmd.Flags().Bool(srvflags.MatchboardProposerABCIEnable, false, "Enable ABCI proposer operation injection for in-process matchboard")
 
 	cmd.Flags().Int(server.FlagMempoolMaxTxs, 0, "The maximum number of transactions in the mempool")
 	// explicitly override the app.toml default value, as normally config file takes precedence over flag defaults
@@ -696,6 +697,9 @@ func maybeStartMatchboard(ctx context.Context, g *errgroup.Group, svrCtx *server
 
 	if addr := strings.TrimSpace(svrCtx.Viper.GetString(srvflags.MatchboardAddress)); addr != "" {
 		cfg.Address = addr
+	}
+	if svrCtx.Viper.GetBool(srvflags.MatchboardProposerABCIEnable) {
+		cfg.Handler.EnableABCIProposerOps = true
 	}
 
 	svrCtx.Logger.Info("starting in-process matchboard server", "addr", cfg.Address)
