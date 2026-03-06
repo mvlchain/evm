@@ -1,6 +1,8 @@
 package matchboard
 
 import (
+	"context"
+	"encoding/json"
 	"log/slog"
 	"time"
 )
@@ -12,6 +14,11 @@ const (
 	defaultPageLimit         = 50
 	defaultMaxPageLimit      = 200
 	defaultGossipTimeout     = 2 * time.Second
+	defaultGossipMessageTTL  = 5 * time.Second
+	defaultGossipSeenTTL     = 2 * time.Minute
+	defaultGossipMaxHops     = 2
+	defaultIntentStreamQueue = 128
+	defaultMatcherShardCount = 4
 )
 
 const (
@@ -27,6 +34,12 @@ const (
 	RecordTypeIntent   = "intent"
 	RecordTypeResponse = "response"
 	RecordTypeFinalize = "finalize"
+)
+
+const (
+	IntentTypeRequest  = "request"
+	IntentTypeAccept   = "accept"
+	IntentTypeFinalize = "finalize"
 )
 
 const (
@@ -52,6 +65,12 @@ const (
 
 const (
 	injectedOperationMagic = "MOP1"
+	injectedBatchMetaMagic = "MBH1"
+)
+
+const (
+	// DefaultInjectedMatchSubmitter is used when proposer-ABCI path auto-builds submit match tx payloads.
+	DefaultInjectedMatchSubmitter = "matchboard-proposer-abci"
 )
 
 var suggestedCodeByError = map[string]string{
@@ -108,8 +127,40 @@ type Config struct {
 	// GossipTimeout bounds one outbound gossip relay request.
 	GossipTimeout time.Duration
 
+	// GossipMessageTTL is the relay TTL for one gossip envelope.
+	GossipMessageTTL time.Duration
+
+	// GossipSeenTTL is how long seen gossip message IDs are retained for deduplication.
+	GossipSeenTTL time.Duration
+
+	// GossipMaxHops bounds forwarding fanout loops in multi-hop gossip meshes.
+	GossipMaxHops int
+
+	// GossipPublisher publishes gossip envelopes over a node-native transport (e.g. CometBFT P2P reactor).
+	// When configured, handler prefers this transport over HTTP gossip peers.
+	GossipPublisher GossipPublisher
+
 	// EnableABCIProposerOps enables app-side proposer operation injection queue bridging.
 	EnableABCIProposerOps bool
+
+	// EnableIntentStream enables SSE subscription endpoint for intent-based delivery.
+	EnableIntentStream bool
+
+	// IntentStreamBuffer controls per-subscriber buffered event queue size.
+	IntentStreamBuffer int
+
+	// MatcherShardCount controls parallel shard fan-out for intent-based candidate generation.
+	MatcherShardCount int
+}
+
+// GossipPublisher publishes one gossip envelope via best-effort node-native transport.
+type GossipPublisher interface {
+	PublishGossip(ctx context.Context, intentType string, envelope GossipEnvelope)
+}
+
+// GossipIngestor consumes gossip envelopes received from node-native transport.
+type GossipIngestor interface {
+	IngestGossipEnvelope(ctx context.Context, intentType string, envelope GossipEnvelope, origin string) error
 }
 
 // SignatureMetadata captures signature metadata attached to a signed artifact.
@@ -235,6 +286,18 @@ type listRecordsResponse struct {
 	Total      uint64        `json:"total"`
 }
 
+// GossipEnvelope is a relay metadata wrapper for short-term artifact gossip.
+type GossipEnvelope struct {
+	MessageID   string          `json:"message_id"`
+	IntentType  string          `json:"intent_type"`
+	Requester   string          `json:"requester"`
+	Responder   string          `json:"responder"`
+	ExpiryUnix  int64           `json:"expiry_unix"`
+	CreatedUnix int64           `json:"created_unix"`
+	Hops        int             `json:"hops"`
+	Payload     json.RawMessage `json:"payload"`
+}
+
 // ProposedOperation is a canonical short-term operation queued for proposer inclusion.
 type ProposedOperation struct {
 	OperationID string `json:"operation_id"`
@@ -254,6 +317,92 @@ type ProposedOperation struct {
 	FinalizeSignHash string `json:"finalize_sign_hash,omitempty"`
 	// MatchCertificate carries optional deterministic protobuf certificate bytes for finalize operations.
 	MatchCertificate []byte `json:"-"`
+	// MatchSubmitMsgPayload carries optional deterministic protobuf bytes for match.v1.MsgSubmitMatchCertificate.
+	MatchSubmitMsgPayload []byte `json:"-"`
+}
+
+// MatchCandidate is a deterministic request/accept pairing candidate.
+type MatchCandidate struct {
+	MatchID             string `json:"match_id"`
+	PoolID              string `json:"pool_id"`
+	IntentID            string `json:"intent_id"`
+	ResponseID          string `json:"response_id"`
+	Requester           string `json:"requester"`
+	Responder           string `json:"responder"`
+	IntentSignHash      string `json:"intent_sign_hash"`
+	ResponseSignHash    string `json:"response_sign_hash"`
+	ScoreHash           string `json:"score_hash"`
+	RequestCreatedUnix  int64  `json:"request_created_unix"`
+	ResponseCreatedUnix int64  `json:"response_created_unix"`
+	ExpiryUnix          int64  `json:"expiry_unix"`
+}
+
+type listMatchCandidatesResponse struct {
+	Matcher    string           `json:"matcher"`
+	Candidates []MatchCandidate `json:"candidates"`
+	Total      uint64           `json:"total"`
+}
+
+type listProposerMatchesResponse struct {
+	Proposer                string           `json:"proposer"`
+	Matches                 []MatchCandidate `json:"matches"`
+	CanonicalMatchBatchHash string           `json:"canonical_match_batch_hash"`
+	TotalPending            uint64           `json:"total_pending"`
+}
+
+type commitProposerMatchesRequest struct {
+	MatchIDs []string `json:"match_ids"`
+}
+
+type commitProposerMatchesResponse struct {
+	Proposer                string `json:"proposer"`
+	Committed               int    `json:"committed"`
+	Remaining               uint64 `json:"remaining"`
+	CanonicalMatchBatchHash string `json:"canonical_match_batch_hash"`
+}
+
+type buildProposerMatchesRequest struct {
+	MatchIDs           []string `json:"match_ids"`
+	Submitter          string   `json:"submitter,omitempty"`
+	RequireCertificate *bool    `json:"require_certificate,omitempty"`
+}
+
+type proposerMatchBuildItem struct {
+	MatchID                 string `json:"match_id"`
+	PoolID                  string `json:"pool_id"`
+	IntentID                string `json:"intent_id"`
+	ResponseID              string `json:"response_id"`
+	FinalizeID              string `json:"finalize_id,omitempty"`
+	Requester               string `json:"requester"`
+	Responder               string `json:"responder"`
+	HasMatchCertificate     bool   `json:"has_match_certificate"`
+	MatchCertificate        []byte `json:"match_certificate,omitempty"`
+	MsgSubmitMatchTxPayload []byte `json:"msg_submit_match_tx_payload,omitempty"`
+	MsgPayloadHash          string `json:"msg_payload_hash,omitempty"`
+}
+
+type buildProposerMatchesResponse struct {
+	Proposer           string                   `json:"proposer"`
+	Submitter          string                   `json:"submitter"`
+	Items              []proposerMatchBuildItem `json:"items"`
+	CanonicalBuildHash string                   `json:"canonical_build_hash"`
+	RequireCertificate bool                     `json:"require_certificate"`
+}
+
+type intentStreamEvent struct {
+	EventID          string `json:"event_id"`
+	IntentType       string `json:"intent_type"`
+	PoolID           string `json:"pool_id"`
+	IntentID         string `json:"intent_id"`
+	ResponseID       string `json:"response_id,omitempty"`
+	FinalizeID       string `json:"finalize_id,omitempty"`
+	Requester        string `json:"requester"`
+	Responder        string `json:"responder"`
+	ExpiryUnix       int64  `json:"expiry_unix"`
+	CreatedUnix      int64  `json:"created_unix"`
+	IntentSignHash   string `json:"intent_sign_hash,omitempty"`
+	ResponseSignHash string `json:"response_sign_hash,omitempty"`
+	FinalizeSignHash string `json:"finalize_sign_hash,omitempty"`
 }
 
 type listProposedOperationsResponse struct {

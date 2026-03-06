@@ -140,16 +140,36 @@
 4. 온체인에는 최종 검증 통과 결과와 replay 방지용 최소 상태(`(pool_id, intent_id)` 인덱스 + match_id + parties)만 남긴다.
 5. 민감 본문은 계속 오프체인에 두고 체인/이벤트에는 `context_hash` 등 해시만 기록한다.
 
-참고 구현 프로파일(HTTP):
-- `POST /v1/internal/gossip/{intents|responses|finalize}` : peer-to-peer signed payload relay (shared secret 보호)
+참고 구현 프로파일(P2P reactor + HTTP fallback):
+- 기본: CometBFT P2P reactor 채널(`MATCHBOARD_GOSSIP`)로 intent envelope를 전파한다(validator peer topology 재사용, 별도 peer list 불필요).
+- fallback: CometBFT 없이 `--grpc-only` 등으로 실행할 때만 HTTP internal gossip relay를 사용한다.
+- `POST /v1/internal/gossip/{intents|responses|finalize}` : peer-to-peer signed payload relay (shared secret 보호, envelope 기반 TTL/hops/dedup 적용)
+- `GET /v1/stream/intents?intent_type=request|accept|finalize&requester=&responder=&pool_id=` : SSE subscription 기반 intent delivery (polling 대체)
+- `GET /v1/matcher/candidates?limit=N` : request/accept index 기반 deterministic candidate 조회(lowest score hash 우선)
+- `GET /v1/proposer/matches?limit=N` : proposer pre-match candidate batch 조회(canonical_match_batch_hash 포함)
+- `POST /v1/proposer/matches/build` : 선택한 match id에 대해 deterministic `MsgSubmitMatchCertificate` payload bytes를 생성(block builder input)
+- `POST /v1/proposer/matches/commit` : proposer가 선택한 match id 집합을 atomic commit(실패 시 전체 롤백)
 - `GET /v1/proposer/operations?limit=N` : canonical 순서의 pending short-term operations 조회
 - `POST /v1/proposer/operations/commit` : proposer가 포함한 operation id 집합을 atomic commit
 - `POST /v1/finalize` 는 선택적으로 `match_certificate`(deterministic protobuf bytes, base64 JSON)를 포함할 수 있으며, proposer-ABCI 경로에서 직접 `x/match` batch 검증에 사용된다.
 
+gossip envelope 규칙:
+1. `message_id`는 deterministic hash로 생성되어야 하며, 노드는 `seenIntentSet`(seen gossip cache)으로 중복 relay를 차단해야 한다.
+2. `expiry_unix`(TTL) 경과 envelope는 저장/relay하지 않는다.
+3. `hops`는 `gossip_max_hops`를 초과할 수 없다.
+
+intent-based matcher 규칙:
+1. request(intent)당 accept(response) 후보군에서 deterministic 점수(`score_hash`)가 가장 낮은 항목을 우선 선택한다.
+2. score 동률 시 `created_unix -> response_id -> signer` 순으로 tie-break한다.
+3. 생성된 `match_id`는 request/accept 바인딩 해시로 deterministic해야 한다.
+4. expired intent/accept/finalize는 주기적으로 cleanup되어 pending/matcher index에서 제거되어야 한다.
+5. matcher 엔진은 shard 병렬화(`MATCHBOARD_MATCHER_SHARDS`)를 사용할 수 있으나, 최종 정렬 결과는 단일 deterministic comparator를 적용해야 한다.
+
 합의 훅(ABCI) 프로파일:
-- `PrepareProposal`: local canonical pending operations를 proposal 뒤에 app-injected envelope로 추가 가능
-- `ProcessProposal`: injected envelope 디코드/순서/operation_id 재계산/`match_certificate` canonical 검증 후 ACCEPT/REJECT
-- `FinalizeBlock`: injected finalize operation의 `match_certificate`들을 `SubmitMatchCertificateBatch`로 one-fail-all-rollback 검증하고 성공 시 queue commit
+- `PrepareProposal`: local canonical pending operations를 proposal 뒤에 app-injected envelope로 추가 가능 (batch metadata 포함)
+- `ProcessProposal`: injected envelope 디코드/순서/operation_id 재계산/`match_certificate` canonical 검증 + optional `MsgSubmitMatchCertificate` payload canonical/binding 검증 + `canonical_batch_hash`(match_result_hash 역할) 재계산 검증 후 ACCEPT/REJECT
+- `FinalizeBlock`: injected finalize operation의 `match_certificate`(또는 prebuilt `MsgSubmitMatchCertificate` payload)의 batch를 `SubmitMatchCertificateBatch`로 one-fail-all-rollback 검증하고 성공 시 queue commit
+- `FinalizeBlock` 결과는 `matchboard_injected_batch` event(`status`, `operation_count`, `certificate_count`, `canonical_batch_hash`, `canonical_match_build_hash`)로 노출된다.
 - `matchboard.proposer-abci.enable=true`일 때만 활성화(기본 비활성)
 
 ### 7.2 Client Payload Example (`POST /v1/finalize` with `match_certificate`)
@@ -215,6 +235,9 @@ curl -sS -X POST "http://127.0.0.1:8080/v1/finalize" \
 5. proposer operation 조회는 canonical ordering을 반환해야 하며 노드 간 결정론이 보장되어야 한다
 6. proposer operation 커밋은 all-or-nothing(atomic)이어야 하며, invalid/missing operation이 있으면 전체 롤백해야 한다
 7. `match_certificate`가 제공된 finalize artifact는 deterministic protobuf canonical bytes여야 하며 finalize hash/context와 바인딩되어야 한다
+8. gossip relay는 TTL + dedup(`message_id`) + hop bound를 강제해야 한다
+9. responder discovery는 polling(`outbox`) 대신 subscription(`stream/intents`) 경로를 우선 사용해야 한다
+10. expired artifact는 matcher/proposer active set에서 제거되어야 하며, cleanup 이후 stale candidate가 노출되면 안 된다
 
 ### 8.3 Optional On-chain Verifier
 
@@ -247,6 +270,43 @@ curl -sS -X POST "http://127.0.0.1:8080/v1/finalize" \
 2. 로그 금지: 이름/연락처/주소/자유 텍스트 메시지/프로필 원문
 3. 시크릿(개인키/API 키/토큰/내부 URL) 커밋 금지
 4. 온체인 상태/이벤트는 해시/식별자 중심 최소 공개
+
+### 10.1 Matchboard Proposer Observability Counters (Operational)
+
+Proposer-ABCI 경로에서 운영 관측을 위해 다음 카운터를 기록한다.
+
+1. `matchboard_proposal_reject_total{reason=...}`
+   - `ProcessProposal` 단계에서 injected batch를 REJECT 할 때 증가
+2. `matchboard_finalize_block_rollback_total{reason=...}`
+   - `FinalizeBlock` 단계에서 injected batch를 롤백할 때 증가
+
+`reason` 예시:
+- `missing_batch_meta`
+- `batch_meta_decode_failed`
+- `batch_operation_count_mismatch`
+- `batch_hash_mismatch`
+- `operation_certificate_invalid`
+- `certificate_batch_rejected`
+
+PromQL 예시:
+
+```promql
+sum by (reason) (increase(matchboard_proposal_reject_total[5m]))
+```
+
+```promql
+sum by (reason) (increase(matchboard_finalize_block_rollback_total[5m]))
+```
+
+```promql
+sum(increase(matchboard_proposal_reject_total{reason="batch_hash_mismatch"}[15m]))
+```
+
+운영 권장:
+1. `batch_hash_mismatch`는 proposer canonicalization 또는 gossip consistency 이상 신호로 즉시 알림 설정
+2. `certificate_batch_rejected` 증가는 `x/match` 검증 규칙/만료/리플레이 정책과의 불일치 가능성 점검
+3. 배포 직후 15~30분 동안 rejection/rollback reason 분포를 baseline으로 저장
+4. Grafana/Prometheus 패널 템플릿은 `docs/matchboard-observability.md` 참고
 
 ## 11. Validation Checklist
 

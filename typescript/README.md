@@ -47,6 +47,7 @@ npm run test:match
 
 `evmd` 2개 컨테이너를 Docker Compose로 올린 뒤(in-process matchboard 포함),
 `intent/response/finalize` gossip 전파를 검증한다.
+기본적으로 CometBFT P2P reactor gossip 경로를 사용한다.
 
 ```bash
 cd typescript
@@ -57,7 +58,17 @@ npm run test:gossip:docker
 - compose 파일: `typescript/docker-compose.matchboard-gossip.yml`
 - node-a matchboard: `http://127.0.0.1:28080`
 - node-b matchboard: `http://127.0.0.1:28081`
+- node-b는 node-a의 실제 node id를 받아 `--p2p.persistent_peers`로 연결하고,
+  matchboard gossip은 CometBFT reactor 채널로 전파된다.
 - 테스트 완료 후 컨테이너 자동 정리(`docker compose down -v`)
+
+속도 최적화(이미지 사전 빌드 후 재사용):
+
+```bash
+docker build -t evmd-gossip:ci -f typescript/Dockerfile.evmd-local .
+cd typescript
+MATCH_DOCKER_BUILD=0 EVMD_GOSSIP_IMAGE=evmd-gossip:ci npm run test:gossip:docker
+```
 
 디버깅용으로 컨테이너를 남기려면:
 
@@ -65,6 +76,28 @@ npm run test:gossip:docker
 cd typescript
 MATCH_DOCKER_KEEP=1 npm run test:gossip:docker
 ```
+
+## Docker 기반 Full Flow E2E
+
+`request -> response -> finalize -> proposer build/commit` 전체 플로우를
+2개 노드에서 검증한다.
+
+```bash
+cd typescript
+npm run test:flow:docker
+```
+
+주요 검증 항목:
+- 내부 gossip endpoint 인증(401)
+- SSE subscription + intent gossip 수신
+- inbox 전파(request/response/finalize)
+- matcher candidates / proposer pending matches 가시성
+- `require_certificate=true` 빌드 실패(인증서 없을 때 409)
+- proposer commit 원자 롤백(유효 + 없는 match_id 동시 제출 시 409)
+- 정상 commit 후 proposer pending 비움
+
+`MATCH_DOCKER_BUILD=0`, `EVMD_GOSSIP_IMAGE=...`, `MATCH_DOCKER_KEEP=1` 환경변수는
+`test:gossip:docker`와 동일하게 사용할 수 있다.
 
 ## 타입체크
 

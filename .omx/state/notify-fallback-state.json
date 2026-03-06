@@ -4,6 +4,6 @@
   "cwd": "/Users/triggy/evm",
   "notify_script": "/Users/triggy/.nvm/versions/node/v24.13.0/lib/node_modules/oh-my-codex/scripts/notify-hook.js",
   "poll_ms": 700,
-  "tracked_files": 1,
+  "tracked_files": 2,
   "seen_turns": 0
 }

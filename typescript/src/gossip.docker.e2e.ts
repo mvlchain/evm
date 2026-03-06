@@ -21,6 +21,7 @@ const TYPESCRIPT_DIR = path.resolve(THIS_DIR, "..");
 const COMPOSE_FILE = path.join(TYPESCRIPT_DIR, "docker-compose.matchboard-gossip.yml");
 const PROJECT = process.env.MATCH_DOCKER_PROJECT ?? `match-gossip-${Date.now()}`;
 const KEEP = process.env.MATCH_DOCKER_KEEP === "1";
+const SHOULD_BUILD = process.env.MATCH_DOCKER_BUILD !== "0";
 
 const NODE_A = "http://127.0.0.1:28080";
 const NODE_B = "http://127.0.0.1:28081";
@@ -40,7 +41,12 @@ async function main(): Promise<void> {
   const finalizeId = `finalize-gossip-${suffix}`;
 
   try {
-    await compose(["up", "-d", "--build", "--remove-orphans"]);
+    console.log(`ℹ️ compose project=${PROJECT} build=${SHOULD_BUILD ? "on" : "off"} image=${process.env.EVMD_GOSSIP_IMAGE ?? "evmd-gossip:local"}`);
+    const upArgs = ["up", "-d", "--remove-orphans"];
+    if (SHOULD_BUILD) {
+      upArgs.push("--build");
+    }
+    await compose(upArgs);
 
     await waitForHealthy(`${NODE_A}/healthz`, "node-a");
     await waitForHealthy(`${NODE_B}/healthz`, "node-b");
@@ -254,4 +260,3 @@ void main().catch((err: unknown) => {
   console.error(err);
   process.exitCode = 1;
 });
-

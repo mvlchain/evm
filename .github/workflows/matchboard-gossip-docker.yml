@@ -58,6 +58,17 @@ jobs:
         if: env.GIT_DIFF
         uses: docker/setup-buildx-action@v3
 
+      - name: Build reusable evmd gossip image (cached)
+        if: env.GIT_DIFF
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: typescript/Dockerfile.evmd-local
+          load: true
+          tags: evmd-gossip:ci
+          cache-from: type=gha,scope=matchboard-gossip-evmd
+          cache-to: type=gha,mode=max,scope=matchboard-gossip-evmd
+
       - name: Install TypeScript dependencies
         if: env.GIT_DIFF
         working-directory: typescript
@@ -72,4 +83,6 @@ jobs:
         if: env.GIT_DIFF
         working-directory: typescript
         run: npm run test:gossip:docker
-
+        env:
+          MATCH_DOCKER_BUILD: "0"
+          EVMD_GOSSIP_IMAGE: evmd-gossip:ci

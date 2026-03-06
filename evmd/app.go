@@ -1,11 +1,13 @@
 package evmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	// Force-load the tracer engines to trigger registration due to Go-Ethereum v1.10.15 changes
 	"github.com/ethereum/go-ethereum/common"
@@ -140,7 +142,7 @@ func init() {
 
 const (
 	appName                    = "evmd"
-	injectedMatchTxSubmitterID = "matchboard-proposer-abci"
+	injectedMatchTxSubmitterID = matchboard.DefaultInjectedMatchSubmitter
 )
 
 // defaultNodeHome default home directories for the application daemon
@@ -843,14 +845,53 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 	}
 
 	normalTxs := make([][]byte, 0, len(req.Txs))
+	injectedTxs := make(map[int]struct{}, len(req.Txs))
 	injectedOps := make(map[int]matchboard.ProposedOperation, len(req.Txs))
 	injectedOrder := make([]int, 0, len(req.Txs))
 	injectedIDs := make([]string, 0)
+	orderedInjectedOps := make([]matchboard.ProposedOperation, 0, len(req.Txs))
+	var (
+		batchMeta      matchboard.InjectedBatchMeta
+		batchMetaSet   bool
+		rollbackReason string
+		injectedErr    error
+	)
+	setInjectedErr := func(reason string, err error) {
+		if injectedErr != nil {
+			return
+		}
+		rollbackReason = reason
+		if err != nil {
+			injectedErr = err
+			return
+		}
+		injectedErr = errors.New(reason)
+	}
 	for idx, txBz := range req.Txs {
+		meta, matchedMeta, metaErr := matchboard.DecodeABCIInjectedBatchMeta(txBz)
+		if matchedMeta {
+			injectedTxs[idx] = struct{}{}
+			switch {
+			case metaErr != nil:
+				setInjectedErr("batch_meta_decode_failed", fmt.Errorf("injected batch metadata decode failed: %w", metaErr))
+			case batchMetaSet:
+				setInjectedErr("batch_meta_duplicate", fmt.Errorf("duplicate injected batch metadata in proposal"))
+			default:
+				batchMeta = meta
+				batchMetaSet = true
+			}
+			continue
+		}
+
 		op, matched, decodeErr := matchboard.DecodeABCIInjectedOperation(txBz)
-		if !matched || decodeErr != nil || op.OperationID == "" ||
-			op.OperationID != matchboard.BuildOperationIDFromProposedOperation(op) {
+		if !matched {
 			normalTxs = append(normalTxs, txBz)
+			continue
+		}
+
+		injectedTxs[idx] = struct{}{}
+		if decodeErr != nil || op.OperationID == "" || op.OperationID != matchboard.BuildOperationIDFromProposedOperation(op) {
+			setInjectedErr("operation_decode_failed", fmt.Errorf("injected operation decode failed for tx index %d", idx))
 			continue
 		}
 
@@ -859,10 +900,15 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 		injectedIDs = append(injectedIDs, op.OperationID)
 	}
 
-	// No valid injected operations discovered, fallback to normal finalize flow.
-	if len(injectedOps) == 0 {
+	// No injected envelope discovered, fallback to normal finalize flow.
+	if len(injectedTxs) == 0 {
 		return app.BaseApp.FinalizeBlock(req)
 	}
+	for _, idx := range injectedOrder {
+		orderedInjectedOps = append(orderedInjectedOps, injectedOps[idx])
+	}
+	computedBatchHash := matchboard.BuildCanonicalBatchHash(orderedInjectedOps)
+	computedBuildHash := matchboard.BuildCanonicalMatchBuildHash(orderedInjectedOps)
 
 	filteredReq := *req
 	filteredReq.Txs = normalTxs
@@ -871,37 +917,94 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 		return res, err
 	}
 
+	if injectedErr == nil {
+		switch {
+		case batchMetaSet && len(injectedOps) == 0:
+			setInjectedErr("batch_meta_without_operations", fmt.Errorf("injected batch metadata without operations"))
+		case !batchMetaSet && len(injectedOps) > 0:
+			setInjectedErr("missing_batch_meta", fmt.Errorf("missing injected batch metadata for operations"))
+		}
+	}
+	if injectedErr == nil && batchMetaSet {
+		if uint32(len(injectedOps)) != batchMeta.OperationCount {
+			setInjectedErr("batch_operation_count_mismatch", fmt.Errorf("injected batch metadata operation_count mismatch"))
+		} else {
+			if batchMeta.CanonicalBatchHash != computedBatchHash {
+				setInjectedErr("batch_hash_mismatch", fmt.Errorf("injected batch metadata canonical hash mismatch"))
+			}
+		}
+	}
+
 	certificates := make([]matchtypes.MatchCertificate, 0, len(injectedOps))
-	var injectedErr error
-	for _, idx := range injectedOrder {
-		op := injectedOps[idx]
-		if len(op.MatchCertificate) == 0 {
-			continue
-		}
-		cert, certErr := matchboard.DecodeOperationCertificate(op)
-		if certErr != nil {
-			injectedErr = fmt.Errorf("injected match operation %s certificate decode failed: %w", op.OperationID, certErr)
-			break
-		}
-		if cert != nil {
-			certificates = append(certificates, *cert)
+	submitter := ""
+	if injectedErr == nil {
+		for _, idx := range injectedOrder {
+			op := injectedOps[idx]
+			if len(op.MatchCertificate) == 0 {
+				continue
+			}
+			var cert *matchtypes.MatchCertificate
+			if len(op.MatchSubmitMsgPayload) > 0 {
+				msg, msgErr := matchboard.DecodeSubmitMatchCertificateMsgPayload(op.MatchSubmitMsgPayload)
+				if msgErr != nil {
+					setInjectedErr("operation_submit_msg_invalid", fmt.Errorf("injected match operation %s submit msg decode failed: %w", op.OperationID, msgErr))
+					break
+				}
+				msgCertBz, marshalErr := matchtypes.DeterministicProtoMarshal(&msg.Certificate)
+				if marshalErr != nil {
+					setInjectedErr("operation_submit_msg_certificate_marshal_failed", fmt.Errorf("injected match operation %s submit msg certificate marshal failed: %w", op.OperationID, marshalErr))
+					break
+				}
+				if !bytes.Equal(msgCertBz, op.MatchCertificate) {
+					setInjectedErr("operation_submit_msg_certificate_mismatch", fmt.Errorf("injected match operation %s submit msg certificate mismatch", op.OperationID))
+					break
+				}
+				msgSubmitter := strings.TrimSpace(msg.Submitter)
+				if msgSubmitter == "" {
+					setInjectedErr("operation_submit_msg_submitter_empty", fmt.Errorf("injected match operation %s submit msg has empty submitter", op.OperationID))
+					break
+				}
+				if submitter == "" {
+					submitter = msgSubmitter
+				} else if submitter != msgSubmitter {
+					setInjectedErr("operation_submit_msg_submitter_mismatch", fmt.Errorf("injected match operation submitter mismatch across batch"))
+					break
+				}
+				cert = &msg.Certificate
+			} else {
+				certDecoded, certErr := matchboard.DecodeOperationCertificate(op)
+				if certErr != nil {
+					setInjectedErr("operation_certificate_invalid", fmt.Errorf("injected match operation %s certificate decode failed: %w", op.OperationID, certErr))
+					break
+				}
+				cert = certDecoded
+				if submitter == "" {
+					submitter = injectedMatchTxSubmitterID
+				}
+			}
+			if cert != nil {
+				certificates = append(certificates, *cert)
+			}
 		}
 	}
 
 	if injectedErr == nil && len(certificates) > 0 {
+		if strings.TrimSpace(submitter) == "" {
+			submitter = injectedMatchTxSubmitterID
+		}
 		ctx := app.NewContextLegacy(false, cmtproto.Header{
 			Height: req.Height,
 			Time:   req.Time,
 		})
-		if _, submitErr := app.MatchKeeper.SubmitMatchCertificateBatch(ctx, injectedMatchTxSubmitterID, certificates); submitErr != nil {
-			injectedErr = fmt.Errorf("injected match operation batch rejected: %w", submitErr)
+		if _, submitErr := app.MatchKeeper.SubmitMatchCertificateBatch(ctx, submitter, certificates); submitErr != nil {
+			setInjectedErr("certificate_batch_rejected", fmt.Errorf("injected match operation batch rejected: %w", submitErr))
 		}
 	}
 
 	mergedResults := make([]*abci.ExecTxResult, len(req.Txs))
 	normalIdx := 0
 	for idx := range req.Txs {
-		if _, ok := injectedOps[idx]; ok {
+		if _, ok := injectedTxs[idx]; ok {
 			if injectedErr != nil {
 				mergedResults[idx] = &abci.ExecTxResult{
 					Code:      1,
@@ -926,13 +1029,43 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 
 	if injectedErr == nil && len(injectedIDs) > 0 {
 		_, _, _, _ = matchboard.CommitABCIProposedOperations(injectedIDs)
+		app.Logger().Info(
+			"injected match operations committed",
+			"height", req.Height,
+			"operations", len(injectedIDs),
+			"certificates", len(certificates),
+			"canonical_batch_hash", computedBatchHash,
+			"canonical_match_build_hash", computedBuildHash,
+		)
 	} else if injectedErr != nil {
+		incrMatchFinalizeRollback(rollbackReason)
 		app.Logger().Warn(
 			"injected match operations rolled back",
 			"height", req.Height,
 			"operations", len(injectedIDs),
+			"certificates", len(certificates),
+			"reason", rollbackReason,
+			"canonical_batch_hash", computedBatchHash,
+			"canonical_match_build_hash", computedBuildHash,
 			"error", injectedErr,
 		)
+	}
+
+	if res != nil {
+		status := "committed"
+		if injectedErr != nil {
+			status = "rolled_back"
+		}
+		res.Events = append(res.Events, abci.Event{
+			Type: "matchboard_injected_batch",
+			Attributes: []abci.EventAttribute{
+				{Key: "status", Value: status, Index: true},
+				{Key: "operation_count", Value: fmt.Sprintf("%d", len(injectedIDs)), Index: false},
+				{Key: "certificate_count", Value: fmt.Sprintf("%d", len(certificates)), Index: false},
+				{Key: "canonical_batch_hash", Value: computedBatchHash, Index: true},
+				{Key: "canonical_match_build_hash", Value: computedBuildHash, Index: true},
+			},
+		})
 	}
 
 	return res, nil

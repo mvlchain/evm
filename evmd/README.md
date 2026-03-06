@@ -42,8 +42,37 @@ Available flags are:
 
 When proposer ABCI mode is enabled, injected finalize operations that include `match_certificate`
 bytes are batch-verified via `x/match` in `FinalizeBlock` with atomic rollback semantics.
+`FinalizeBlock` emits `matchboard_injected_batch` event including
+`canonical_batch_hash` and `canonical_match_build_hash`.
+
+### Matchboard proposer observability
+
+When proposer ABCI mode is enabled, the app emits telemetry counters:
+
+- `matchboard_proposal_reject_total{reason=...}`
+- `matchboard_finalize_block_rollback_total{reason=...}`
+
+Example PromQL:
+
+```promql
+sum by (reason) (increase(matchboard_proposal_reject_total[5m]))
+```
+
+```promql
+sum by (reason) (increase(matchboard_finalize_block_rollback_total[5m]))
+```
+
+Grafana panel JSON snippet은 `docs/matchboard-observability.md`를 참고하세요.
 
 By default `local_node.sh` also starts the matchboard sidecar at `http://127.0.0.1:8080`.
+
+In-process matchboard automatically derives gossip peers from
+CometBFT `p2p.persistent_peers` and `p2p.seeds` (host reuse + matchboard port).
+기본 gossip transport는 CometBFT P2P reactor(`MATCHBOARD_GOSSIP`, channel `0x72`)이며,
+`MATCHBOARD_GOSSIP_SHARED_SECRET`은 HTTP internal relay fallback 모드에서만 필요하다.
+
+- `MATCHBOARD_GOSSIP_PEER_PORT` (optional): force peer matchboard port for auto-discovery
+- `MATCHBOARD_GOSSIP_PEER_SCHEME` (optional): `http` (default) or `https`
 
 ## Connect to Wallet
 

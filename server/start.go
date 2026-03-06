@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime/pprof"
+	"strconv"
 	"strings"
 
 	ethmetricsexp "github.com/ethereum/go-ethereum/metrics/exp"
@@ -51,6 +54,12 @@ import (
 	"github.com/cosmos/cosmos-sdk/telemetry"
 	sdkmempool "github.com/cosmos/cosmos-sdk/types/mempool"
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
+)
+
+const (
+	matchboardGossipPeerPortEnv   = "MATCHBOARD_GOSSIP_PEER_PORT"
+	matchboardGossipPeerSchemeEnv = "MATCHBOARD_GOSSIP_PEER_SCHEME"
+	defaultMatchboardPeerScheme   = "http"
 )
 
 // DBOpener is a function to open `application.db`, potentially with customized options.
@@ -412,8 +421,9 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 	genDocProvider := GenDocProvider(cfg)
 
 	var (
-		bftNode  *node.Node
-		gRPCOnly = svrCtx.Viper.GetBool(srvflags.GRPCOnly)
+		bftNode              *node.Node
+		matchboardP2PReactor *matchboardGossipReactor
+		gRPCOnly             = svrCtx.Viper.GetBool(srvflags.GRPCOnly)
 	)
 
 	if gRPCOnly {
@@ -437,6 +447,12 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 		if err != nil {
 			logger.Error("failed init node", "error", err.Error())
 			return err
+		}
+		if sw := bftNode.Switch(); sw != nil {
+			channelID := pickMatchboardGossipChannelID(sw, matchboardGossipReactorChannelID)
+			matchboardP2PReactor = newMatchboardGossipReactor(svrCtx.Logger.With("module", "matchboard_reactor"), channelID)
+			sw.AddReactor(matchboardGossipReactorName, matchboardP2PReactor)
+			svrCtx.Logger.Info("registered matchboard gossip reactor", "channel_id", channelID)
 		}
 
 		if err := bftNode.Start(); err != nil {
@@ -537,7 +553,7 @@ func startInProcess(svrCtx *server.Context, clientCtx client.Context, opts Start
 	}
 
 	startAPIServer(ctx, svrCtx, clientCtx, g, config.Config, app, grpcSrv, metrics, config.EVM.GethMetricsAddress)
-	if err := maybeStartMatchboard(ctx, g, svrCtx); err != nil {
+	if err := maybeStartMatchboard(ctx, g, svrCtx, bftNode, matchboardP2PReactor); err != nil {
 		return err
 	}
 
@@ -684,7 +700,13 @@ func GenDocProvider(cfg *cmtcfg.Config) func() (*cmttypes.GenesisDoc, error) {
 	}
 }
 
-func maybeStartMatchboard(ctx context.Context, g *errgroup.Group, svrCtx *server.Context) error {
+func maybeStartMatchboard(
+	ctx context.Context,
+	g *errgroup.Group,
+	svrCtx *server.Context,
+	bftNode *node.Node,
+	gossipReactor *matchboardGossipReactor,
+) error {
 	if !svrCtx.Viper.GetBool(srvflags.MatchboardEnable) {
 		return nil
 	}
@@ -701,6 +723,28 @@ func maybeStartMatchboard(ctx context.Context, g *errgroup.Group, svrCtx *server
 	if svrCtx.Viper.GetBool(srvflags.MatchboardProposerABCIEnable) {
 		cfg.Handler.EnableABCIProposerOps = true
 	}
+	if gossipReactor != nil {
+		cfg.Handler.GossipPublisher = gossipReactor
+		cfg.OnGossipIngestorReady = gossipReactor.SetIngestor
+		svrCtx.Logger.Info("matchboard gossip transport set to CometBFT reactor")
+	} else {
+		autoPeers, err := deriveMatchboardGossipPeersFromConnectedPeers(bftNode, cfg.Address, os.LookupEnv)
+		if err != nil {
+			return err
+		}
+		if len(autoPeers) == 0 {
+			autoPeers, err = deriveMatchboardGossipPeersFromCometConfig(svrCtx.Config, cfg.Address, os.LookupEnv)
+		}
+		if err != nil {
+			return err
+		}
+		if len(autoPeers) > 0 && strings.TrimSpace(cfg.Handler.GossipSharedSecret) != "" {
+			cfg.Handler.GossipPeers = autoPeers
+			svrCtx.Logger.Info("auto-configured matchboard gossip peers from CometBFT peer config", "peer_count", len(autoPeers))
+		} else if len(autoPeers) > 0 && strings.TrimSpace(cfg.Handler.GossipSharedSecret) == "" {
+			svrCtx.Logger.Info("matchboard gossip peer auto-discovery skipped because MATCHBOARD_GOSSIP_SHARED_SECRET is empty", "peer_count", len(autoPeers))
+		}
+	}
 
 	svrCtx.Logger.Info("starting in-process matchboard server", "addr", cfg.Address)
 	g.Go(func() error {
@@ -713,4 +757,234 @@ func maybeStartMatchboard(ctx context.Context, g *errgroup.Group, svrCtx *server
 	})
 
 	return nil
+}
+
+func deriveMatchboardGossipPeersFromConnectedPeers(
+	bftNode *node.Node,
+	matchboardAddress string,
+	lookupEnv func(string) (string, bool),
+) ([]string, error) {
+	if bftNode == nil {
+		return nil, nil
+	}
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+
+	scheme := strings.TrimSpace(getEnvWithDefault(lookupEnv, matchboardGossipPeerSchemeEnv, defaultMatchboardPeerScheme))
+	if scheme == "" {
+		scheme = defaultMatchboardPeerScheme
+	}
+	if scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("invalid %s: must be http or https", matchboardGossipPeerSchemeEnv)
+	}
+
+	port, err := resolveMatchboardPeerPort(matchboardAddress, lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+
+	sw := bftNode.Switch()
+	if sw == nil || sw.Peers() == nil {
+		return nil, nil
+	}
+
+	peers := sw.Peers().Copy()
+	out := make([]string, 0, len(peers))
+	seen := make(map[string]struct{}, len(peers))
+	for _, p := range peers {
+		if p == nil {
+			continue
+		}
+		host := ""
+		if socketAddr := p.SocketAddr(); socketAddr != nil {
+			host = strings.TrimSpace(socketAddr.IP.String())
+		}
+		if host == "" || host == "<nil>" {
+			host = strings.TrimSpace(p.RemoteIP().String())
+		}
+		if host == "" || host == "<nil>" {
+			continue
+		}
+		target := (&url.URL{
+			Scheme: scheme,
+			Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+		}).String()
+		if _, exists := seen[target]; exists {
+			continue
+		}
+		seen[target] = struct{}{}
+		out = append(out, target)
+	}
+	return out, nil
+}
+
+func deriveMatchboardGossipPeersFromCometConfig(
+	cfg *cmtcfg.Config,
+	matchboardAddress string,
+	lookupEnv func(string) (string, bool),
+) ([]string, error) {
+	if cfg == nil || cfg.P2P == nil {
+		return nil, nil
+	}
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+
+	scheme := strings.TrimSpace(getEnvWithDefault(lookupEnv, matchboardGossipPeerSchemeEnv, defaultMatchboardPeerScheme))
+	if scheme == "" {
+		scheme = defaultMatchboardPeerScheme
+	}
+	if scheme != "http" && scheme != "https" {
+		return nil, fmt.Errorf("invalid %s: must be http or https", matchboardGossipPeerSchemeEnv)
+	}
+
+	port, err := resolveMatchboardPeerPort(matchboardAddress, lookupEnv)
+	if err != nil {
+		return nil, err
+	}
+
+	candidates := make([]string, 0, 8)
+	seen := make(map[string]struct{}, 8)
+	for _, rawList := range []string{cfg.P2P.PersistentPeers, cfg.P2P.Seeds} {
+		for _, entry := range strings.Split(rawList, ",") {
+			host, ok := extractPeerHost(entry)
+			if !ok {
+				continue
+			}
+			target := (&url.URL{
+				Scheme: scheme,
+				Host:   net.JoinHostPort(host, strconv.Itoa(port)),
+			}).String()
+			if _, exists := seen[target]; exists {
+				continue
+			}
+			seen[target] = struct{}{}
+			candidates = append(candidates, target)
+		}
+	}
+
+	return candidates, nil
+}
+
+func resolveMatchboardPeerPort(
+	matchboardAddress string,
+	lookupEnv func(string) (string, bool),
+) (int, error) {
+	if lookupEnv == nil {
+		lookupEnv = os.LookupEnv
+	}
+	if raw, ok := lookupEnv(matchboardGossipPeerPortEnv); ok && strings.TrimSpace(raw) != "" {
+		v, err := strconv.Atoi(strings.TrimSpace(raw))
+		if err != nil || v <= 0 || v > 65535 {
+			return 0, fmt.Errorf("invalid %s: %q", matchboardGossipPeerPortEnv, raw)
+		}
+		return v, nil
+	}
+
+	addr := strings.TrimSpace(matchboardAddress)
+	if addr == "" {
+		return 8080, nil
+	}
+	if strings.HasPrefix(addr, ":") {
+		v, err := strconv.Atoi(strings.TrimPrefix(addr, ":"))
+		if err != nil || v <= 0 || v > 65535 {
+			return 0, fmt.Errorf("invalid matchboard address port in %q", addr)
+		}
+		return v, nil
+	}
+	if strings.HasPrefix(addr, "http://") || strings.HasPrefix(addr, "https://") {
+		parsed, err := url.Parse(addr)
+		if err != nil {
+			return 0, fmt.Errorf("invalid matchboard address %q: %w", addr, err)
+		}
+		if parsed.Port() == "" {
+			return 8080, nil
+		}
+		v, err := strconv.Atoi(parsed.Port())
+		if err != nil || v <= 0 || v > 65535 {
+			return 0, fmt.Errorf("invalid matchboard address port in %q", addr)
+		}
+		return v, nil
+	}
+
+	if _, port, err := net.SplitHostPort(addr); err == nil {
+		v, convErr := strconv.Atoi(port)
+		if convErr != nil || v <= 0 || v > 65535 {
+			return 0, fmt.Errorf("invalid matchboard address port in %q", addr)
+		}
+		return v, nil
+	}
+
+	v, err := strconv.Atoi(addr)
+	if err != nil || v <= 0 || v > 65535 {
+		return 0, fmt.Errorf("invalid matchboard address %q", addr)
+	}
+	return v, nil
+}
+
+func extractPeerHost(entry string) (string, bool) {
+	entry = strings.TrimSpace(entry)
+	if entry == "" {
+		return "", false
+	}
+	if at := strings.LastIndex(entry, "@"); at >= 0 && at+1 < len(entry) {
+		entry = strings.TrimSpace(entry[at+1:])
+	}
+	if strings.Contains(entry, "://") {
+		parsed, err := url.Parse(entry)
+		if err == nil {
+			if host := strings.TrimSpace(parsed.Hostname()); host != "" {
+				return host, true
+			}
+		}
+	}
+	if host, _, err := net.SplitHostPort(entry); err == nil {
+		host = strings.TrimSpace(host)
+		if host != "" {
+			return host, true
+		}
+	}
+	trimmed := strings.Trim(entry, "[]")
+	if trimmed != "" && !strings.Contains(trimmed, "/") {
+		return trimmed, true
+	}
+	return "", false
+}
+
+func getEnvWithDefault(lookupEnv func(string) (string, bool), key, fallback string) string {
+	if lookupEnv == nil {
+		return fallback
+	}
+	if v, ok := lookupEnv(key); ok {
+		return v
+	}
+	return fallback
+}
+
+func pickMatchboardGossipChannelID(sw *p2p.Switch, preferred byte) byte {
+	if sw == nil {
+		return preferred
+	}
+	used := make(map[byte]struct{}, 32)
+	for _, reactor := range sw.Reactors() {
+		if reactor == nil {
+			continue
+		}
+		for _, ch := range reactor.GetChannels() {
+			if ch == nil {
+				continue
+			}
+			used[ch.ID] = struct{}{}
+		}
+	}
+	if _, exists := used[preferred]; !exists {
+		return preferred
+	}
+	for candidate := byte(0x70); candidate != 0; candidate++ {
+		if _, exists := used[candidate]; !exists {
+			return candidate
+		}
+	}
+	return preferred
 }

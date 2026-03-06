@@ -105,6 +105,24 @@ func TestValidateAndNormalizeFinalizeWithMatchCertificate(t *testing.T) {
 	require.Equal(t, normalizedCert, req.MatchCertificate)
 }
 
+func TestBuildAndDecodeSubmitMatchCertificateMsgPayload(t *testing.T) {
+	nowUnix := int64(1_700_000_000)
+	cert := validMatchCertificateForTest(t, nowUnix, nowUnix+3600)
+	certBytes, err := matchtypes.DeterministicProtoMarshal(&cert)
+	require.NoError(t, err)
+
+	payload, err := BuildSubmitMatchCertificateMsgPayload(certBytes, "submitter-1")
+	require.NoError(t, err)
+	require.NotEmpty(t, payload)
+
+	msg, err := DecodeSubmitMatchCertificateMsgPayload(payload)
+	require.NoError(t, err)
+	require.NotNil(t, msg)
+	require.Equal(t, "submitter-1", msg.Submitter)
+	require.Equal(t, cert.Payload.PoolId, msg.Certificate.Payload.PoolId)
+	require.Equal(t, cert.Payload.IntentId, msg.Certificate.Payload.IntentId)
+}
+
 func validMatchCertificateForTest(t *testing.T, nowUnix, expiresUnix int64) matchtypes.MatchCertificate {
 	t.Helper()
 

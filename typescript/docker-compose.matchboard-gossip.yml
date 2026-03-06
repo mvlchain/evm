@@ -1,5 +1,6 @@
 services:
   evmd-a:
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
     build:
       context: ..
       dockerfile: typescript/Dockerfile.evmd-local
@@ -7,13 +8,15 @@ services:
       MATCHBOARD_TOKEN_MAP: token-alice=alice,token-bob=bob
       MATCHBOARD_GOSSIP_SHARED_SECRET: dev-gossip-secret
       MATCHBOARD_GOSSIP_NODE_ID: node-a
-      MATCHBOARD_GOSSIP_PEERS: http://evmd-b:8080
+      MATCHBOARD_GOSSIP_PEER_PORT: "8080"
     command:
       [
         "/bin/sh",
         "-lc",
-        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init node-a --chain-id gossip-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+        "set -e; HOME_DIR=/tmp/evmd-home; SHARED_DIR=/shared; mkdir -p \"$$SHARED_DIR\"; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init node-a --chain-id gossip-1 --home \"$$HOME_DIR\" >/dev/null; fi; GENESIS=\"$$HOME_DIR/config/genesis.json\"; TMP_GENESIS=\"$$HOME_DIR/config/tmp_genesis.json\"; jq '.app_state[\"bank\"][\"denom_metadata\"]=[{\"description\":\"Native staking token for local docker gossip tests.\",\"denom_units\":[{\"denom\":\"stake\",\"exponent\":0,\"aliases\":[\"astake\"]},{\"denom\":\"test\",\"exponent\":18,\"aliases\":[]}],\"base\":\"stake\",\"display\":\"test\",\"name\":\"Stake Token\",\"symbol\":\"STAKE\",\"uri\":\"\",\"uri_hash\":\"\"}]' \"$$GENESIS\" > \"$$TMP_GENESIS\" && mv \"$$TMP_GENESIS\" \"$$GENESIS\"; evmd comet show-node-id --home \"$$HOME_DIR\" > \"$$SHARED_DIR/node-a.id\"; cp \"$$GENESIS\" \"$$SHARED_DIR/genesis.json\"; exec evmd start --home \"$$HOME_DIR\" --chain-id gossip-1 --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
       ]
+    volumes:
+      - gossip-shared:/shared
     ports:
       - "28080:8080"
     healthcheck:
@@ -24,19 +27,22 @@ services:
       start_period: 10s
 
   evmd-b:
-    build:
-      context: ..
-      dockerfile: typescript/Dockerfile.evmd-local
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    depends_on:
+      - evmd-a
     environment:
       MATCHBOARD_TOKEN_MAP: token-alice=alice,token-bob=bob
       MATCHBOARD_GOSSIP_SHARED_SECRET: dev-gossip-secret
       MATCHBOARD_GOSSIP_NODE_ID: node-b
+      MATCHBOARD_GOSSIP_PEER_PORT: "8080"
     command:
       [
         "/bin/sh",
         "-lc",
-        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init node-b --chain-id gossip-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+        "set -e; HOME_DIR=/tmp/evmd-home; SHARED_DIR=/shared; mkdir -p \"$$SHARED_DIR\"; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init node-b --chain-id gossip-1 --home \"$$HOME_DIR\" >/dev/null; fi; for i in $$(seq 1 120); do if [ -s \"$$SHARED_DIR/node-a.id\" ] && [ -s \"$$SHARED_DIR/genesis.json\" ]; then break; fi; sleep 1; done; if [ ! -s \"$$SHARED_DIR/node-a.id\" ] || [ ! -s \"$$SHARED_DIR/genesis.json\" ]; then echo 'timed out waiting for node-a bootstrap files' >&2; exit 1; fi; cp \"$$SHARED_DIR/genesis.json\" \"$$HOME_DIR/config/genesis.json\"; PEER_ID=$$(cat \"$$SHARED_DIR/node-a.id\"); exec evmd start --home \"$$HOME_DIR\" --chain-id gossip-1 --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --p2p.persistent_peers=\"$$PEER_ID@evmd-a:26656\" --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
       ]
+    volumes:
+      - gossip-shared:/shared
     ports:
       - "28081:8080"
     healthcheck:
@@ -45,3 +51,6 @@ services:
       timeout: 3s
       retries: 20
       start_period: 10s
+
+volumes:
+  gossip-shared:

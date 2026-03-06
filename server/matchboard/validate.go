@@ -92,8 +92,30 @@ func normalizeConfig(cfg Config) (Config, error) {
 	if cfg.GossipTimeout <= 0 {
 		cfg.GossipTimeout = defaultGossipTimeout
 	}
+	if cfg.GossipMessageTTL <= 0 {
+		cfg.GossipMessageTTL = defaultGossipMessageTTL
+	}
+	if cfg.GossipSeenTTL <= 0 {
+		cfg.GossipSeenTTL = defaultGossipSeenTTL
+	}
+	if cfg.GossipMaxHops <= 0 {
+		cfg.GossipMaxHops = defaultGossipMaxHops
+	}
 	if len(cfg.GossipPeers) > 0 && cfg.GossipSharedSecret == "" {
 		return Config{}, errors.New("gossip peers require gossip shared secret")
+	}
+	if cfg.GossipMaxHops < 1 {
+		return Config{}, errors.New("gossip max hops must be positive")
+	}
+
+	if cfg.IntentStreamBuffer <= 0 {
+		cfg.IntentStreamBuffer = defaultIntentStreamQueue
+	}
+	if cfg.MatcherShardCount <= 0 {
+		cfg.MatcherShardCount = defaultMatcherShardCount
+	}
+	if cfg.MatcherShardCount > 1024 {
+		return Config{}, errors.New("matcher shard count must be <= 1024")
 	}
 
 	return cfg, nil
