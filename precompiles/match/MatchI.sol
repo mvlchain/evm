@@ -15,4 +15,8 @@ interface MatchI {
         external
         view
         returns (bool found, string memory matchId, string memory requester, string memory responder);
+
+    function submitMatchCertificate(bytes calldata certificate)
+        external
+        returns (string memory matchId, string memory replayKey, bytes memory certificateHash);
 }

@@ -11,6 +11,7 @@
 - `hasReplay(string poolId, string intentId) -> bool`
 - `getReplay(string poolId, string intentId) -> (bool found, string matchId)`
 - `getReplayParties(string poolId, string intentId) -> (bool found, string matchId, string requester, string responder)`
+- `submitMatchCertificate(bytes certificate) -> (string matchId, string replayKey, bytes certificateHash)`
 
 The precompile exposes replay index state (`pool_id`, `intent_id`, `match_id`) and on-chain requester/responder metadata.
 It does not expose off-chain plaintext context data.

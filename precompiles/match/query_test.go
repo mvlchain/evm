@@ -3,6 +3,7 @@ package match
 import (
 	"testing"
 
+	matchtypes "github.com/cosmos/evm/x/match/types"
 	"github.com/stretchr/testify/require"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -36,6 +37,10 @@ func (m *mockMatchKeeper) GetReplayParties(_ sdk.Context, poolID, intentID strin
 	m.lastPoolID = poolID
 	m.lastIntentID = intentID
 	return m.requester, m.responder, m.parties
+}
+
+func (m *mockMatchKeeper) SubmitMatchCertificate(_ sdk.Context, _ *matchtypes.MsgSubmitMatchCertificate) (*matchtypes.MsgSubmitMatchCertificateResponse, error) {
+	return &matchtypes.MsgSubmitMatchCertificateResponse{}, nil
 }
 
 func TestHasReplay(t *testing.T) {

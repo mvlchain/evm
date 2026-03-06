@@ -73,3 +73,53 @@ func TestParseReplayArgs(t *testing.T) {
 		})
 	}
 }
+
+func TestParseSubmitCertificateArgs(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []any
+		wantErr    bool
+		errMessage string
+		wantLen    int
+	}{
+		{
+			name:    "valid",
+			args:    []any{[]byte{0x01, 0x02, 0x03}},
+			wantErr: false,
+			wantLen: 3,
+		},
+		{
+			name:       "no arguments",
+			args:       []any{},
+			wantErr:    true,
+			errMessage: fmt.Sprintf(cmn.ErrInvalidNumberOfArgs, 1, 0),
+		},
+		{
+			name:       "wrong type",
+			args:       []any{"abc"},
+			wantErr:    true,
+			errMessage: "invalid type for certificate",
+		},
+		{
+			name:       "empty bytes",
+			args:       []any{[]byte{}},
+			wantErr:    true,
+			errMessage: "certificate cannot be empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseSubmitCertificateArgs(tt.args)
+
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tt.errMessage)
+				return
+			}
+
+			require.NoError(t, err)
+			require.Len(t, got.Certificate, tt.wantLen)
+		})
+	}
+}

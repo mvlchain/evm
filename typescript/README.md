@@ -26,22 +26,17 @@ npm install
 기본값:
 - `NODE_RPC_URL=http://127.0.0.1:26657`
 - `MATCHBOARD_URL=http://127.0.0.1:8080`
+- `MATCH_CHAIN_ID=9001`
 - `MATCHBOARD_TOKEN_ALICE=token-alice`
 - `MATCHBOARD_TOKEN_BOB=token-bob`
-- `MATCHBOARD_PRINCIPAL_ALICE=alice`
-- `MATCHBOARD_PRINCIPAL_BOB=bob`
+- `MATCHBOARD_PRINCIPAL_ALICE=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101`
+- `MATCHBOARD_PRINCIPAL_BOB=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17`
 - `MATCHBOARD_ALICE_PRIVATE_KEY=0x88cbead91aee890d27bf06e003ade3d4e952427e88f88d31d61d3ef5e5d54305`
 - `MATCHBOARD_BOB_PRIVATE_KEY=0x741de4f8988ea941d3ff0287911ca4074e62b7d45c991a51186455366f10b544`
+- `MATCH_EXPECT_ONCHAIN_REPLAY=1` (기본값)
 
-테스트는 `ethers.js`로 `intent_sign_hash`, `response_sign_hash`, `finalize_sign_hash`를 각각 secp256k1 서명한다.
+테스트는 deterministic protobuf sign-doc 해시(`intent/response/finalize/certificate`)를 계산한 뒤 `ethers.js` secp256k1 서명으로 오프체인 게시 + 온체인 제출(`submitMatchCertificate`)까지 수행한다.
 기본적으로 상세 로그를 출력하며, 로그를 끄려면 `MATCH_E2E_VERBOSE=0`을 설정한다.
-
-EVM 주소 기반 검증까지 켜려면 principal도 주소로 맞춰 실행한다:
-
-```bash
-export MATCHBOARD_PRINCIPAL_ALICE=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101
-export MATCHBOARD_PRINCIPAL_BOB=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17
-```
 
 ```bash
 cd typescript

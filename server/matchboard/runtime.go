@@ -18,8 +18,8 @@ const (
 const (
 	defaultTokenAlice     = "token-alice"
 	defaultTokenBob       = "token-bob"
-	defaultPrincipalAlice = "alice"
-	defaultPrincipalBob   = "bob"
+	defaultPrincipalAlice = "0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101"
+	defaultPrincipalBob   = "0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17"
 )
 
 // RuntimeConfig controls matchboard process-level startup behavior.

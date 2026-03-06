@@ -13,6 +13,11 @@ type ReplayArgs struct {
 	IntentID string
 }
 
+// SubmitCertificateArgs represents method inputs used to submit a match certificate.
+type SubmitCertificateArgs struct {
+	Certificate []byte
+}
+
 // ParseReplayArgs parses common replay query arguments.
 func ParseReplayArgs(args []interface{}) (ReplayArgs, error) {
 	if len(args) != 2 {
@@ -38,5 +43,24 @@ func ParseReplayArgs(args []interface{}) (ReplayArgs, error) {
 	return ReplayArgs{
 		PoolID:   poolID,
 		IntentID: intentID,
+	}, nil
+}
+
+// ParseSubmitCertificateArgs parses submitMatchCertificate arguments.
+func ParseSubmitCertificateArgs(args []interface{}) (SubmitCertificateArgs, error) {
+	if len(args) != 1 {
+		return SubmitCertificateArgs{}, fmt.Errorf(cmn.ErrInvalidNumberOfArgs, 1, len(args))
+	}
+
+	certificate, ok := args[0].([]byte)
+	if !ok {
+		return SubmitCertificateArgs{}, fmt.Errorf(cmn.ErrInvalidType, "certificate", []byte{}, args[0])
+	}
+	if len(certificate) == 0 {
+		return SubmitCertificateArgs{}, fmt.Errorf("certificate cannot be empty")
+	}
+
+	return SubmitCertificateArgs{
+		Certificate: certificate,
 	}, nil
 }

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import process from "node:process";
 import { Contract, JsonRpcProvider, SigningKey, Wallet, getAddress, isAddress } from "ethers";
 
@@ -114,16 +115,17 @@ type ListRecordsResponse = {
 const RPC_URL = mustEnv("NODE_RPC_URL", "http://127.0.0.1:26657");
 const EVM_RPC_URL = mustEnv("EVM_RPC_URL", "http://127.0.0.1:8545");
 const MATCHBOARD_URL = mustEnv("MATCHBOARD_URL", "http://127.0.0.1:8080");
+const CHAIN_ID = mustEnv("MATCH_CHAIN_ID", "9001");
 const MATCH_PRECOMPILE_ADDRESS = mustEnv(
   "MATCH_PRECOMPILE_ADDRESS",
   "0x0000000000000000000000000000000000000808",
 );
-const MATCH_EXPECT_ONCHAIN_REPLAY = mustEnv("MATCH_EXPECT_ONCHAIN_REPLAY", "0") === "1";
-const MATCH_REQUIRE_PRECOMPILE = "1";
+const MATCH_EXPECT_ONCHAIN_REPLAY = mustEnv("MATCH_EXPECT_ONCHAIN_REPLAY", "1") === "1";
+const MATCH_REQUIRE_PRECOMPILE = mustEnv("MATCH_REQUIRE_PRECOMPILE", "1") === "1";
 const ALICE_TOKEN = mustEnv("MATCHBOARD_TOKEN_ALICE", "token-alice");
 const BOB_TOKEN = mustEnv("MATCHBOARD_TOKEN_BOB", "token-bob");
-const ALICE = mustEnv("MATCHBOARD_PRINCIPAL_ALICE", "alice");
-const BOB = mustEnv("MATCHBOARD_PRINCIPAL_BOB", "bob");
+const ALICE = mustEnv("MATCHBOARD_PRINCIPAL_ALICE", "0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101");
+const BOB = mustEnv("MATCHBOARD_PRINCIPAL_BOB", "0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17");
 const VERBOSE = mustEnv("MATCH_E2E_VERBOSE", "1") !== "0";
 const ALICE_PRIVATE_KEY = mustPrivateKey(
   "MATCHBOARD_ALICE_PRIVATE_KEY",
@@ -137,6 +139,7 @@ const MATCH_PRECOMPILE_ABI = [
   "function hasReplay(string poolId, string intentId) view returns (bool exists)",
   "function getReplay(string poolId, string intentId) view returns (bool found, string matchId)",
   "function getReplayParties(string poolId, string intentId) view returns (bool found, string matchId, string requester, string responder)",
+  "function submitMatchCertificate(bytes certificate) returns (string matchId, string replayKey, bytes certificateHash)",
 ];
 
 function mustEnv(key: string, fallback: string): string {
@@ -224,6 +227,489 @@ function sanitizeForLog(input: unknown): unknown {
   return out;
 }
 
+const WIRE_TYPE_VARINT = 0;
+const WIRE_TYPE_LEN = 2;
+const DIGEST_ALGO_SHA256 = 1;
+const SIGNATURE_ALGO_SECP256K1 = 1;
+const SIGN_DOC_TYPE_INTENT = 1;
+const SIGN_DOC_TYPE_RESPONSE = 2;
+const SIGN_DOC_TYPE_FINALIZE = 3;
+const SIGN_DOC_TYPE_CERTIFICATE = 4;
+const textEncoder = new TextEncoder();
+
+type IntentPayloadMsg = {
+  protocolVersion?: string;
+  boardId?: string;
+  chainId?: string;
+  poolId: string;
+  intentId: string;
+  initiator: string;
+  initiatorNonce?: bigint;
+  issuedUnix: bigint;
+  expiresUnix: bigint;
+  contextHash: Uint8Array;
+  termsHash?: Uint8Array;
+  policyHash?: Uint8Array;
+  recipient?: string;
+  replayGuard?: Uint8Array;
+  digestAlgorithm: number;
+};
+
+type ResponsePayloadMsg = {
+  protocolVersion?: string;
+  boardId?: string;
+  chainId?: string;
+  poolId: string;
+  intentId: string;
+  intentSignHash: Uint8Array;
+  responseId: string;
+  responder: string;
+  responderNonce?: bigint;
+  issuedUnix: bigint;
+  expiresUnix: bigint;
+  contextHash: Uint8Array;
+  termsHash?: Uint8Array;
+  policyHash?: Uint8Array;
+  recipient?: string;
+  replayGuard?: Uint8Array;
+  digestAlgorithm: number;
+};
+
+type FinalizePayloadMsg = {
+  protocolVersion?: string;
+  boardId?: string;
+  chainId?: string;
+  poolId: string;
+  intentId: string;
+  responseId: string;
+  intentSignHash: Uint8Array;
+  responseSignHash: Uint8Array;
+  finalizeId: string;
+  initiator: string;
+  responder: string;
+  finalizeNonce?: bigint;
+  issuedUnix: bigint;
+  expiresUnix: bigint;
+  contextHash: Uint8Array;
+  settlementHash?: Uint8Array;
+  replayGuard?: Uint8Array;
+  digestAlgorithm: number;
+};
+
+type CertificatePayloadMsg = {
+  protocolVersion?: string;
+  boardId?: string;
+  chainId?: string;
+  poolId: string;
+  intentId: string;
+  responseId: string;
+  finalizeId: string;
+  certificateId: string;
+  intentSignHash: Uint8Array;
+  responseSignHash: Uint8Array;
+  finalizeSignHash: Uint8Array;
+  initiator: string;
+  responder: string;
+  issuedUnix: bigint;
+  expiresUnix: bigint;
+  contextHash: Uint8Array;
+  replayGuard?: Uint8Array;
+  digestAlgorithm: number;
+};
+
+type SignatureMsg = {
+  signer: string;
+  algorithm: number;
+  publicKey?: Uint8Array;
+  signature: Uint8Array;
+};
+
+type CanonicalBundle = {
+  intentPayload: IntentPayloadMsg;
+  responsePayload: ResponsePayloadMsg;
+  finalizePayload: FinalizePayloadMsg;
+  certificatePayload: CertificatePayloadMsg;
+  intentHash: Uint8Array;
+  responseHash: Uint8Array;
+  finalizeHash: Uint8Array;
+  certificateHash: Uint8Array;
+};
+
+function concatBytes(...chunks: Uint8Array[]): Uint8Array {
+  const total = chunks.reduce((n, c) => n + c.length, 0);
+  const out = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.length;
+  }
+  return out;
+}
+
+function encodeVarint(value: number | bigint): Uint8Array {
+  let v = typeof value === "bigint" ? value : BigInt(value);
+  if (v < 0n) {
+    throw new Error(`negative varint is not supported: ${value}`);
+  }
+  const bytes: number[] = [];
+  while (v >= 0x80n) {
+    bytes.push(Number((v & 0x7fn) | 0x80n));
+    v >>= 7n;
+  }
+  bytes.push(Number(v));
+  return Uint8Array.from(bytes);
+}
+
+function encodeTag(fieldNumber: number, wireType: number): Uint8Array {
+  return encodeVarint((fieldNumber << 3) | wireType);
+}
+
+function encodeFieldVarint(fieldNumber: number, value: number | bigint): Uint8Array {
+  if (value === 0 || value === 0n) {
+    return new Uint8Array();
+  }
+  return concatBytes(encodeTag(fieldNumber, WIRE_TYPE_VARINT), encodeVarint(value));
+}
+
+function encodeFieldEnum(fieldNumber: number, value: number): Uint8Array {
+  return encodeFieldVarint(fieldNumber, value);
+}
+
+function encodeFieldBytes(fieldNumber: number, value?: Uint8Array): Uint8Array {
+  if (!value || value.length === 0) {
+    return new Uint8Array();
+  }
+  return concatBytes(encodeTag(fieldNumber, WIRE_TYPE_LEN), encodeVarint(value.length), value);
+}
+
+function encodeFieldString(fieldNumber: number, value?: string): Uint8Array {
+  if (!value || value.length === 0) {
+    return new Uint8Array();
+  }
+  return encodeFieldBytes(fieldNumber, textEncoder.encode(value));
+}
+
+function encodeFieldMessage(fieldNumber: number, value: Uint8Array): Uint8Array {
+  if (value.length === 0) {
+    return new Uint8Array();
+  }
+  return concatBytes(encodeTag(fieldNumber, WIRE_TYPE_LEN), encodeVarint(value.length), value);
+}
+
+function sha256Bytes(data: Uint8Array): Uint8Array {
+  return Uint8Array.from(createHash("sha256").update(data).digest());
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  const normalized = hex.startsWith("0x") ? hex.slice(2) : hex;
+  if (normalized.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(normalized)) {
+    throw new Error(`invalid hex value: ${hex}`);
+  }
+  return Uint8Array.from(Buffer.from(normalized, "hex"));
+}
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("hex");
+}
+
+function toHexPrefixed(bytes: Uint8Array): string {
+  return `0x${bytesToHex(bytes)}`;
+}
+
+function encodeIntentPayload(p: IntentPayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldString(1, p.protocolVersion),
+    encodeFieldString(2, p.boardId),
+    encodeFieldString(3, p.chainId),
+    encodeFieldString(4, p.poolId),
+    encodeFieldString(5, p.intentId),
+    encodeFieldString(6, p.initiator),
+    encodeFieldVarint(7, p.initiatorNonce ?? 0n),
+    encodeFieldVarint(8, p.issuedUnix),
+    encodeFieldVarint(9, p.expiresUnix),
+    encodeFieldBytes(10, p.contextHash),
+    encodeFieldBytes(11, p.termsHash),
+    encodeFieldBytes(12, p.policyHash),
+    encodeFieldString(13, p.recipient),
+    encodeFieldBytes(14, p.replayGuard),
+    encodeFieldEnum(15, p.digestAlgorithm),
+  );
+}
+
+function encodeIntentSignDoc(payload: IntentPayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldEnum(1, SIGN_DOC_TYPE_INTENT),
+    encodeFieldMessage(2, encodeIntentPayload(payload)),
+  );
+}
+
+function encodeResponsePayload(p: ResponsePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldString(1, p.protocolVersion),
+    encodeFieldString(2, p.boardId),
+    encodeFieldString(3, p.chainId),
+    encodeFieldString(4, p.poolId),
+    encodeFieldString(5, p.intentId),
+    encodeFieldBytes(6, p.intentSignHash),
+    encodeFieldString(7, p.responseId),
+    encodeFieldString(8, p.responder),
+    encodeFieldVarint(9, p.responderNonce ?? 0n),
+    encodeFieldVarint(10, p.issuedUnix),
+    encodeFieldVarint(11, p.expiresUnix),
+    encodeFieldBytes(12, p.contextHash),
+    encodeFieldBytes(13, p.termsHash),
+    encodeFieldBytes(14, p.policyHash),
+    encodeFieldString(15, p.recipient),
+    encodeFieldBytes(16, p.replayGuard),
+    encodeFieldEnum(17, p.digestAlgorithm),
+  );
+}
+
+function encodeResponseSignDoc(payload: ResponsePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldEnum(1, SIGN_DOC_TYPE_RESPONSE),
+    encodeFieldMessage(2, encodeResponsePayload(payload)),
+  );
+}
+
+function encodeFinalizePayload(p: FinalizePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldString(1, p.protocolVersion),
+    encodeFieldString(2, p.boardId),
+    encodeFieldString(3, p.chainId),
+    encodeFieldString(4, p.poolId),
+    encodeFieldString(5, p.intentId),
+    encodeFieldString(6, p.responseId),
+    encodeFieldBytes(7, p.intentSignHash),
+    encodeFieldBytes(8, p.responseSignHash),
+    encodeFieldString(9, p.finalizeId),
+    encodeFieldString(10, p.initiator),
+    encodeFieldString(11, p.responder),
+    encodeFieldVarint(12, p.finalizeNonce ?? 0n),
+    encodeFieldVarint(13, p.issuedUnix),
+    encodeFieldVarint(14, p.expiresUnix),
+    encodeFieldBytes(15, p.contextHash),
+    encodeFieldBytes(16, p.settlementHash),
+    encodeFieldBytes(17, p.replayGuard),
+    encodeFieldEnum(18, p.digestAlgorithm),
+  );
+}
+
+function encodeFinalizeSignDoc(payload: FinalizePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldEnum(1, SIGN_DOC_TYPE_FINALIZE),
+    encodeFieldMessage(2, encodeFinalizePayload(payload)),
+  );
+}
+
+function encodeCertificatePayload(p: CertificatePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldString(1, p.protocolVersion),
+    encodeFieldString(2, p.boardId),
+    encodeFieldString(3, p.chainId),
+    encodeFieldString(4, p.poolId),
+    encodeFieldString(5, p.intentId),
+    encodeFieldString(6, p.responseId),
+    encodeFieldString(7, p.finalizeId),
+    encodeFieldString(8, p.certificateId),
+    encodeFieldBytes(9, p.intentSignHash),
+    encodeFieldBytes(10, p.responseSignHash),
+    encodeFieldBytes(11, p.finalizeSignHash),
+    encodeFieldString(12, p.initiator),
+    encodeFieldString(13, p.responder),
+    encodeFieldVarint(14, p.issuedUnix),
+    encodeFieldVarint(15, p.expiresUnix),
+    encodeFieldBytes(16, p.contextHash),
+    encodeFieldBytes(17, p.replayGuard),
+    encodeFieldEnum(18, p.digestAlgorithm),
+  );
+}
+
+function encodeCertificateSignDoc(payload: CertificatePayloadMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldEnum(1, SIGN_DOC_TYPE_CERTIFICATE),
+    encodeFieldMessage(2, encodeCertificatePayload(payload)),
+  );
+}
+
+function encodeSignature(sig: SignatureMsg): Uint8Array {
+  return concatBytes(
+    encodeFieldString(1, sig.signer),
+    encodeFieldEnum(2, sig.algorithm),
+    encodeFieldBytes(3, sig.publicKey),
+    encodeFieldBytes(4, sig.signature),
+  );
+}
+
+function encodeSignedIntent(input: {
+  payload: IntentPayloadMsg;
+  signature: SignatureMsg;
+  signBytesHash: Uint8Array;
+}): Uint8Array {
+  return concatBytes(
+    encodeFieldMessage(1, encodeIntentPayload(input.payload)),
+    encodeFieldMessage(2, encodeSignature(input.signature)),
+    encodeFieldBytes(3, input.signBytesHash),
+  );
+}
+
+function encodeSignedResponse(input: {
+  payload: ResponsePayloadMsg;
+  signature: SignatureMsg;
+  signBytesHash: Uint8Array;
+}): Uint8Array {
+  return concatBytes(
+    encodeFieldMessage(1, encodeResponsePayload(input.payload)),
+    encodeFieldMessage(2, encodeSignature(input.signature)),
+    encodeFieldBytes(3, input.signBytesHash),
+  );
+}
+
+function encodeSignedFinalize(input: {
+  payload: FinalizePayloadMsg;
+  initiatorSignature: SignatureMsg;
+  responderSignature: SignatureMsg;
+  signBytesHash: Uint8Array;
+}): Uint8Array {
+  return concatBytes(
+    encodeFieldMessage(1, encodeFinalizePayload(input.payload)),
+    encodeFieldMessage(2, encodeSignature(input.initiatorSignature)),
+    encodeFieldMessage(3, encodeSignature(input.responderSignature)),
+    encodeFieldBytes(4, input.signBytesHash),
+  );
+}
+
+function encodeMatchCertificate(input: {
+  payload: CertificatePayloadMsg;
+  intent: { payload: IntentPayloadMsg; signature: SignatureMsg; signBytesHash: Uint8Array };
+  response: { payload: ResponsePayloadMsg; signature: SignatureMsg; signBytesHash: Uint8Array };
+  finalize: {
+    payload: FinalizePayloadMsg;
+    initiatorSignature: SignatureMsg;
+    responderSignature: SignatureMsg;
+    signBytesHash: Uint8Array;
+  };
+  boardSignature: SignatureMsg;
+  signBytesHash: Uint8Array;
+}): Uint8Array {
+  return concatBytes(
+    encodeFieldMessage(1, encodeCertificatePayload(input.payload)),
+    encodeFieldMessage(2, encodeSignedIntent(input.intent)),
+    encodeFieldMessage(3, encodeSignedResponse(input.response)),
+    encodeFieldMessage(4, encodeSignedFinalize(input.finalize)),
+    encodeFieldMessage(5, encodeSignature(input.boardSignature)),
+    encodeFieldBytes(6, input.signBytesHash),
+  );
+}
+
+function buildCanonicalBundle(args: {
+  protocolVersion: string;
+  boardId: string;
+  chainId: string;
+  poolId: string;
+  intentId: string;
+  responseId: string;
+  finalizeId: string;
+  certificateId: string;
+  initiator: string;
+  responder: string;
+  issuedUnix: bigint;
+  expiresUnix: bigint;
+  contextHashHex: string;
+}): CanonicalBundle {
+  const contextHash = hexToBytes(args.contextHashHex);
+  const replayGuard = sha256Bytes(
+    textEncoder.encode(`${args.poolId}|${args.intentId}|${args.responseId}|${args.finalizeId}`),
+  );
+
+  const intentPayload: IntentPayloadMsg = {
+    protocolVersion: args.protocolVersion,
+    boardId: args.boardId,
+    chainId: args.chainId,
+    poolId: args.poolId,
+    intentId: args.intentId,
+    initiator: args.initiator,
+    issuedUnix: args.issuedUnix,
+    expiresUnix: args.expiresUnix,
+    contextHash,
+    recipient: args.responder,
+    replayGuard,
+    digestAlgorithm: DIGEST_ALGO_SHA256,
+  };
+  const intentHash = sha256Bytes(encodeIntentSignDoc(intentPayload));
+
+  const responsePayload: ResponsePayloadMsg = {
+    protocolVersion: args.protocolVersion,
+    boardId: args.boardId,
+    chainId: args.chainId,
+    poolId: args.poolId,
+    intentId: args.intentId,
+    intentSignHash: intentHash,
+    responseId: args.responseId,
+    responder: args.responder,
+    issuedUnix: args.issuedUnix,
+    expiresUnix: args.expiresUnix,
+    contextHash,
+    recipient: args.initiator,
+    replayGuard,
+    digestAlgorithm: DIGEST_ALGO_SHA256,
+  };
+  const responseHash = sha256Bytes(encodeResponseSignDoc(responsePayload));
+
+  const finalizePayload: FinalizePayloadMsg = {
+    protocolVersion: args.protocolVersion,
+    boardId: args.boardId,
+    chainId: args.chainId,
+    poolId: args.poolId,
+    intentId: args.intentId,
+    responseId: args.responseId,
+    intentSignHash: intentHash,
+    responseSignHash: responseHash,
+    finalizeId: args.finalizeId,
+    initiator: args.initiator,
+    responder: args.responder,
+    issuedUnix: args.issuedUnix,
+    expiresUnix: args.expiresUnix,
+    contextHash,
+    replayGuard,
+    digestAlgorithm: DIGEST_ALGO_SHA256,
+  };
+  const finalizeHash = sha256Bytes(encodeFinalizeSignDoc(finalizePayload));
+
+  const certificatePayload: CertificatePayloadMsg = {
+    protocolVersion: args.protocolVersion,
+    boardId: args.boardId,
+    chainId: args.chainId,
+    poolId: args.poolId,
+    intentId: args.intentId,
+    responseId: args.responseId,
+    finalizeId: args.finalizeId,
+    certificateId: args.certificateId,
+    intentSignHash: intentHash,
+    responseSignHash: responseHash,
+    finalizeSignHash: finalizeHash,
+    initiator: args.initiator,
+    responder: args.responder,
+    issuedUnix: args.issuedUnix,
+    expiresUnix: args.expiresUnix,
+    contextHash,
+    replayGuard,
+    digestAlgorithm: DIGEST_ALGO_SHA256,
+  };
+  const certificateHash = sha256Bytes(encodeCertificateSignDoc(certificatePayload));
+
+  return {
+    intentPayload,
+    responsePayload,
+    finalizePayload,
+    certificatePayload,
+    intentHash,
+    responseHash,
+    finalizeHash,
+    certificateHash,
+  };
+}
+
 function toDigestHex(hashHex: string): string {
   if (!/^[0-9a-fA-F]{64}$/.test(hashHex)) {
     throw new Error(`invalid hash format for signing: ${hashHex}`);
@@ -234,6 +720,14 @@ function toDigestHex(hashHex: string): string {
 function signHash(hashHex: string, privateKey: string): string {
   const signingKey = new SigningKey(privateKey);
   return signingKey.sign(toDigestHex(hashHex)).serialized;
+}
+
+function signDigestBytes(hash: Uint8Array, privateKey: string): string {
+  if (hash.length !== 32) {
+    throw new Error(`hash must be 32 bytes, got ${hash.length}`);
+  }
+  const signingKey = new SigningKey(privateKey);
+  return signingKey.sign(hash).serialized;
 }
 
 function assertPrincipalPrivateKeyMatch(principal: string, privateKey: string, label: string): void {
@@ -294,7 +788,7 @@ async function ensureMatchboardIsRunning(): Promise<void> {
     logInfo("matchboard is reachable", { status: res.status });
   } catch (err) {
     throw new Error(
-      `failed to connect to matchboard at ${MATCHBOARD_URL} (start server: go run ./server/matchboard/cmd/matchboardd)`,
+      `failed to connect to matchboard at ${MATCHBOARD_URL} (start node with ./local_node.sh so matchboard runs in-process)`,
       { cause: err },
     );
   }
@@ -442,35 +936,71 @@ async function main(): Promise<void> {
   await ensureNodeIsRunning();
   await ensureEvmRpcIsRunning();
   await ensureMatchboardIsRunning();
+  assert.ok(isAddress(ALICE), `MATCHBOARD_PRINCIPAL_ALICE must be an ethereum address, got: ${ALICE}`);
+  assert.ok(isAddress(BOB), `MATCHBOARD_PRINCIPAL_BOB must be an ethereum address, got: ${BOB}`);
   assertPrincipalPrivateKeyMatch(ALICE, ALICE_PRIVATE_KEY, "alice");
   assertPrincipalPrivateKeyMatch(BOB, BOB_PRIVATE_KEY, "bob");
   logInfo("principal/private-key checks passed");
 
   const now = Math.floor(Date.now() / 1000);
+  const issuedUnix = BigInt(now);
   const expiresUnix = now + 600;
+  const expiresUnixBig = BigInt(expiresUnix);
   const runId = `${now}-${Math.floor(Math.random() * 1_000_000)}`;
   logInfo("test run identifiers", { runId, expiresUnix });
 
-  const intentSignHash = testHash("1");
-  const responseSignHash = testHash("2");
-  const finalizeSignHash = testHash("3");
-  const intentContextHash = testHash("a");
-  const responseContextHash = testHash("b");
-  const finalizeContextHash = testHash("c");
+  const poolId = `pool-ts-${runId}`;
+  const intentId = `intent-ts-${runId}`;
+  const responseId = `response-ts-${runId}`;
+  const finalizeId = `finalize-ts-${runId}`;
+  const certificateId = `certificate-ts-${runId}`;
+  const contextHashHex = testHash("a");
+  const protocolVersion = "match/v1";
+  const boardId = "matchboard-e2e";
+  const chainId = CHAIN_ID;
+
+  const bundle = buildCanonicalBundle({
+    protocolVersion,
+    boardId,
+    chainId,
+    poolId,
+    intentId,
+    responseId,
+    finalizeId,
+    certificateId,
+    initiator: ALICE,
+    responder: BOB,
+    issuedUnix,
+    expiresUnix: expiresUnixBig,
+    contextHashHex,
+  });
+
+  const intentSignHash = bytesToHex(bundle.intentHash);
+  const responseSignHash = bytesToHex(bundle.responseHash);
+  const finalizeSignHash = bytesToHex(bundle.finalizeHash);
+  const certificateSignHash = bytesToHex(bundle.certificateHash);
+  const intentSignatureHex = signDigestBytes(bundle.intentHash, ALICE_PRIVATE_KEY);
+  const responseSignatureHex = signDigestBytes(bundle.responseHash, BOB_PRIVATE_KEY);
+  const finalizeInitiatorSignatureHex = signDigestBytes(bundle.finalizeHash, ALICE_PRIVATE_KEY);
+  const finalizeResponderSignatureHex = signDigestBytes(bundle.finalizeHash, BOB_PRIVATE_KEY);
+  const boardSignatureHex = signDigestBytes(bundle.certificateHash, ALICE_PRIVATE_KEY);
 
   const intentReq: PublishIntentRequest = {
-    pool_id: `pool-ts-${runId}`,
-    intent_id: `intent-ts-${runId}`,
+    protocol_version: protocolVersion,
+    board_id: boardId,
+    chain_id: chainId,
+    pool_id: poolId,
+    intent_id: intentId,
     sender: ALICE,
     recipient: BOB,
     expires_unix: expiresUnix,
     digest_algorithm: "sha256",
     intent_sign_hash: intentSignHash,
-    context_hash: intentContextHash,
+    context_hash: contextHashHex,
     signature: {
       signer: ALICE,
       algorithm: "secp256k1",
-      signature: signHash(intentSignHash, ALICE_PRIVATE_KEY),
+      signature: intentSignatureHex,
     },
   };
 
@@ -486,20 +1016,23 @@ async function main(): Promise<void> {
   assert.equal(intentRes.data.intent_sign_hash, intentSignHash);
 
   const responseReq: PublishResponseRequest = {
-    pool_id: intentReq.pool_id,
-    intent_id: intentReq.intent_id,
-    response_id: `response-ts-${runId}`,
+    protocol_version: protocolVersion,
+    board_id: boardId,
+    chain_id: chainId,
+    pool_id: poolId,
+    intent_id: intentId,
+    response_id: responseId,
     sender: BOB,
     recipient: ALICE,
     expires_unix: expiresUnix,
     digest_algorithm: "sha256",
     intent_sign_hash: intentSignHash,
     response_sign_hash: responseSignHash,
-    context_hash: responseContextHash,
+    context_hash: contextHashHex,
     signature: {
       signer: BOB,
       algorithm: "secp256k1",
-      signature: signHash(responseSignHash, BOB_PRIVATE_KEY),
+      signature: responseSignatureHex,
     },
   };
 
@@ -516,10 +1049,13 @@ async function main(): Promise<void> {
   assert.equal(responseRes.data.response_sign_hash, responseSignHash);
 
   const finalizeReq: PublishFinalizeRequest = {
-    pool_id: intentReq.pool_id,
-    intent_id: intentReq.intent_id,
-    response_id: responseReq.response_id,
-    finalize_id: `finalize-ts-${runId}`,
+    protocol_version: protocolVersion,
+    board_id: boardId,
+    chain_id: chainId,
+    pool_id: poolId,
+    intent_id: intentId,
+    response_id: responseId,
+    finalize_id: finalizeId,
     sender: ALICE,
     recipient: BOB,
     expires_unix: expiresUnix,
@@ -527,16 +1063,16 @@ async function main(): Promise<void> {
     intent_sign_hash: intentSignHash,
     response_sign_hash: responseSignHash,
     finalize_sign_hash: finalizeSignHash,
-    context_hash: finalizeContextHash,
+    context_hash: contextHashHex,
     initiator_signature: {
       signer: ALICE,
       algorithm: "secp256k1",
-      signature: signHash(finalizeSignHash, ALICE_PRIVATE_KEY),
+      signature: finalizeInitiatorSignatureHex,
     },
     responder_signature: {
       signer: BOB,
       algorithm: "secp256k1",
-      signature: signHash(finalizeSignHash, BOB_PRIVATE_KEY),
+      signature: finalizeResponderSignatureHex,
     },
   };
 
@@ -592,7 +1128,72 @@ async function main(): Promise<void> {
   assert.equal(bobOutbox.data.principal, BOB);
   assert.ok(bobOutbox.data.records.some((r) => r.record_type === "response" && r.response_sign_hash === responseSignHash));
 
-  const replay = await queryMatchPrecompile(intentReq.pool_id, intentReq.intent_id);
+  const certificateBytes = encodeMatchCertificate({
+    payload: bundle.certificatePayload,
+    intent: {
+      payload: bundle.intentPayload,
+      signature: {
+        signer: ALICE,
+        algorithm: SIGNATURE_ALGO_SECP256K1,
+        signature: hexToBytes(intentSignatureHex),
+      },
+      signBytesHash: bundle.intentHash,
+    },
+    response: {
+      payload: bundle.responsePayload,
+      signature: {
+        signer: BOB,
+        algorithm: SIGNATURE_ALGO_SECP256K1,
+        signature: hexToBytes(responseSignatureHex),
+      },
+      signBytesHash: bundle.responseHash,
+    },
+    finalize: {
+      payload: bundle.finalizePayload,
+      initiatorSignature: {
+        signer: ALICE,
+        algorithm: SIGNATURE_ALGO_SECP256K1,
+        signature: hexToBytes(finalizeInitiatorSignatureHex),
+      },
+      responderSignature: {
+        signer: BOB,
+        algorithm: SIGNATURE_ALGO_SECP256K1,
+        signature: hexToBytes(finalizeResponderSignatureHex),
+      },
+      signBytesHash: bundle.finalizeHash,
+    },
+    boardSignature: {
+      signer: ALICE,
+      algorithm: SIGNATURE_ALGO_SECP256K1,
+      signature: hexToBytes(boardSignatureHex),
+    },
+    signBytesHash: bundle.certificateHash,
+  });
+
+  logInfo("submitting certificate on-chain via match precompile", {
+    precompile_address: MATCH_PRECOMPILE_ADDRESS,
+    pool_id: poolId,
+    intent_id: intentId,
+    response_id: responseId,
+    finalize_id: finalizeId,
+    certificate_id: certificateId,
+    certificate_sign_hash: certificateSignHash,
+    certificate_bytes_len: certificateBytes.length,
+  });
+  const provider = new JsonRpcProvider(EVM_RPC_URL);
+  const submitter = new Wallet(ALICE_PRIVATE_KEY, provider);
+  const writablePrecompile = new Contract(MATCH_PRECOMPILE_ADDRESS, MATCH_PRECOMPILE_ABI, submitter);
+  const submitTx = await writablePrecompile.submitMatchCertificate(certificateBytes, { gasLimit: 1_500_000 });
+  const submitReceipt = await submitTx.wait();
+  assert.ok(submitReceipt, "submitMatchCertificate transaction receipt is missing");
+  assert.equal(submitReceipt.status, 1, `submitMatchCertificate reverted: tx=${submitTx.hash}`);
+  logInfo("on-chain submit tx committed", {
+    tx_hash: submitTx.hash,
+    block_number: submitReceipt.blockNumber,
+    gas_used: submitReceipt.gasUsed.toString(),
+  });
+
+  const replay = await queryMatchPrecompile(poolId, intentId);
   if (!replay.available) {
     if (MATCH_REQUIRE_PRECOMPILE || MATCH_EXPECT_ONCHAIN_REPLAY) {
       assert.fail(
@@ -609,6 +1210,8 @@ async function main(): Promise<void> {
       if (replay.partiesAvailable) {
         assert.notEqual(replay.requester.trim(), "", "on-chain requester should not be empty");
         assert.notEqual(replay.responder.trim(), "", "on-chain responder should not be empty");
+        assert.equal(getAddress(replay.requester), getAddress(ALICE), "on-chain requester mismatch");
+        assert.equal(getAddress(replay.responder), getAddress(BOB), "on-chain responder mismatch");
       }
     } else {
       logInfo(

@@ -25,6 +25,8 @@ const (
 	GasGetReplay = 2_500
 	// GasGetReplayParties defines the gas cost for replay requester/responder lookups.
 	GasGetReplayParties = 3_000
+	// GasSubmitMatchCertificate defines the gas cost for certificate submission.
+	GasSubmitMatchCertificate = 200_000
 )
 
 var _ vm.PrecompiledContract = &Precompile{}
@@ -88,6 +90,8 @@ func (p Precompile) RequiredGas(input []byte) uint64 {
 		return GasGetReplay
 	case GetReplayPartiesMethod:
 		return GasGetReplayParties
+	case SubmitMatchCertificateMethod:
+		return GasSubmitMatchCertificate
 	default:
 		return 0
 	}
@@ -113,13 +117,14 @@ func (p Precompile) Execute(ctx sdk.Context, contract *vm.Contract, readOnly boo
 		return p.GetReplay(ctx, method, args)
 	case GetReplayPartiesMethod:
 		return p.GetReplayParties(ctx, method, args)
+	case SubmitMatchCertificateMethod:
+		return p.SubmitMatchCertificate(ctx, contract, method, args)
 	default:
 		return nil, fmt.Errorf(cmn.ErrUnknownMethod, method.Name)
 	}
 }
 
 // IsTransaction checks if the given method name corresponds to a transaction or query.
-// All currently exposed match precompile methods are queries.
-func (Precompile) IsTransaction(_ *abi.Method) bool {
-	return false
+func (Precompile) IsTransaction(method *abi.Method) bool {
+	return method != nil && method.Name == SubmitMatchCertificateMethod
 }
