@@ -1,5 +1,5 @@
 {
-  "last_turn_at": "2026-03-06T10:34:19.818Z",
-  "turn_count": 34,
-  "last_agent_output": "맞아, 그 에러 원인 찾았고 바로 수정했어.\n\n### 원인\n`StartServer`에서 `GossipIngestor` 타입 단언을 하는데,  \n`NewHandler`가 실제로는 `"
+  "last_turn_at": "2026-03-06T10:43:05.118Z",
+  "turn_count": 35,
+  "last_agent_output": "맞아, 바로 고쳤어. (지금은 TS 테스트가 변경사항에 맞게 동작함)\n\n### 수정한 내용\n- `typescript/src/gossip.docker.e2e.ts`\n  - 내부 `/"
 }

@@ -47,7 +47,7 @@ npm run test:match
 
 `evmd` 2개 컨테이너를 Docker Compose로 올린 뒤(in-process matchboard 포함),
 `intent/response/finalize` gossip 전파를 검증한다.
-기본적으로 CometBFT P2P reactor gossip 경로를 사용한다.
+Docker 구성은 `--grpc-only` 기반이라 HTTP internal gossip fallback 경로를 검증한다.
 
 ```bash
 cd typescript
@@ -58,8 +58,7 @@ npm run test:gossip:docker
 - compose 파일: `typescript/docker-compose.matchboard-gossip.yml`
 - node-a matchboard: `http://127.0.0.1:28080`
 - node-b matchboard: `http://127.0.0.1:28081`
-- node-b는 node-a의 실제 node id를 받아 `--p2p.persistent_peers`로 연결하고,
-  matchboard gossip은 CometBFT reactor 채널로 전파된다.
+- `MATCHBOARD_GOSSIP_PEERS` 없이 `--p2p.persistent_peers` 값에서 peer host를 유도해 gossip relay
 - 테스트 완료 후 컨테이너 자동 정리(`docker compose down -v`)
 
 속도 최적화(이미지 사전 빌드 후 재사용):
@@ -88,7 +87,6 @@ npm run test:flow:docker
 ```
 
 주요 검증 항목:
-- 내부 gossip endpoint 인증(401)
 - SSE subscription + intent gossip 수신
 - inbox 전파(request/response/finalize)
 - matcher candidates / proposer pending matches 가시성

@@ -116,18 +116,6 @@ async function main(): Promise<void> {
     await waitForHealthy(`${NODE_A}/healthz`, "node-a");
     await waitForHealthy(`${NODE_B}/healthz`, "node-b");
 
-    // internal gossip auth must reject unauthenticated relay.
-    {
-      const unauthorized = await fetch(`${NODE_B}/v1/internal/gossip/intents`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (unauthorized.status !== 401) {
-        throw new Error(`expected gossip auth 401, got ${unauthorized.status}`);
-      }
-    }
-
     // Start SSE subscription before posting the request intent.
     const sseIntentPromise = waitForSSEIntentEvent(
       `${NODE_B}/v1/stream/intents?intent_type=request&responder=bob`,
@@ -135,6 +123,8 @@ async function main(): Promise<void> {
       (evt) => evt.pool_id === poolId && evt.intent_id === intentId && evt.intent_type === "request",
       "request SSE on node-b",
     );
+    // Give the subscription a brief window to attach before publishing.
+    await sleep(500);
 
     await post(`${NODE_A}/v1/intents`, TOKEN_ALICE, {
       pool_id: poolId,

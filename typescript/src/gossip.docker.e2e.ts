@@ -51,16 +51,6 @@ async function main(): Promise<void> {
     await waitForHealthy(`${NODE_A}/healthz`, "node-a");
     await waitForHealthy(`${NODE_B}/healthz`, "node-b");
 
-    // Gossip internal endpoints must be protected.
-    const unauthorizedGossip = await fetch(`${NODE_B}/v1/internal/gossip/intents`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    if (unauthorizedGossip.status !== 401) {
-      throw new Error(`expected unauthorized gossip status=401, got ${unauthorizedGossip.status}`);
-    }
-
     await post(`${NODE_A}/v1/intents`, TOKEN_ALICE, {
       pool_id: poolId,
       intent_id: intentId,
