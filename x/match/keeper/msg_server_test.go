@@ -189,6 +189,7 @@ func validSubmitMessageWithExpiry(nowUnix, expiresUnix int64) *types.MsgSubmitMa
 	board := mustNewIdentity()
 
 	intentPayload := &types.IntentPayload{
+		ChainId:         "cosmos-evm-test-1",
 		PoolId:          "pool-1",
 		IntentId:        "intent-1",
 		Initiator:       maker.address,
@@ -200,6 +201,7 @@ func validSubmitMessageWithExpiry(nowUnix, expiresUnix int64) *types.MsgSubmitMa
 	intentHash := mustHash(types.IntentSignDocHash(intentPayload))
 
 	responsePayload := &types.ResponsePayload{
+		ChainId:         "cosmos-evm-test-1",
 		PoolId:          "pool-1",
 		IntentId:        "intent-1",
 		IntentSignHash:  intentHash,
@@ -209,10 +211,12 @@ func validSubmitMessageWithExpiry(nowUnix, expiresUnix int64) *types.MsgSubmitMa
 		ExpiresUnix:     expiresUnix,
 		ContextHash:     contextHash,
 		DigestAlgorithm: types.DigestAlgorithmSHA256,
+		ResponseType:    types.ResponseType_RESPONSE_TYPE_ACCEPT,
 	}
 	responseHash := mustHash(types.ResponseSignDocHash(responsePayload))
 
 	finalizePayload := &types.FinalizePayload{
+		ChainId:          "cosmos-evm-test-1",
 		PoolId:           "pool-1",
 		IntentId:         "intent-1",
 		ResponseId:       "response-1",
@@ -229,6 +233,7 @@ func validSubmitMessageWithExpiry(nowUnix, expiresUnix int64) *types.MsgSubmitMa
 	finalizeHash := mustHash(types.FinalizeSignDocHash(finalizePayload))
 
 	certificatePayload := &types.CertificatePayload{
+		ChainId:          "cosmos-evm-test-1",
 		PoolId:           "pool-1",
 		IntentId:         "intent-1",
 		ResponseId:       "response-1",

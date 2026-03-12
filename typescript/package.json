@@ -5,9 +5,17 @@
   "type": "module",
   "scripts": {
     "test:match": "tsx src/match.e2e.ts",
+    "test:matchboard": "tsx src/matchboard.e2e.ts",
     "test:gossip:docker": "tsx src/gossip.docker.e2e.ts",
     "test:flow:docker": "tsx src/matchboard.flow.docker.e2e.ts",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench:hardware": "tsx src/hardware.bench.ts",
+    "bench:hardware:up": "docker compose -f docker-compose.hardware-4n.yml up -d --build",
+    "bench:hardware:down": "docker compose -f docker-compose.hardware-4n.yml down -v --remove-orphans",
+    "bench:evm:prepare": "bash ./scripts/prepare_evm_bench.sh",
+    "bench:evm:up": "npm run bench:evm:prepare && docker compose -f docker-compose.evm-hw-4n.yml up -d --build",
+    "bench:evm": "tsx src/evm.hardware.bench.ts",
+    "bench:evm:down": "docker compose -f docker-compose.evm-hw-4n.yml down -v --remove-orphans"
   },
   "devDependencies": {
     "@types/node": "^22.13.10",

@@ -37,24 +37,28 @@ func NewHandler(cfg Config) (http.Handler, error) {
 	}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/intents", h.withAuth(h.handlePublishIntent))
-	mux.HandleFunc("/v1/responses", h.withAuth(h.handlePublishResponse))
-	mux.HandleFunc("/v1/finalize", h.withAuth(h.handlePublishFinalize))
-	mux.HandleFunc("/v1/inbox", h.withAuth(h.handleInbox))
-	mux.HandleFunc("/v1/outbox", h.withAuth(h.handleOutbox))
-	mux.HandleFunc("/v1/matcher/candidates", h.withAuth(h.handleListMatchCandidates))
-	mux.HandleFunc("/v1/proposer/matches", h.withAuth(h.handleListProposerMatches))
-	mux.HandleFunc("/v1/proposer/matches/build", h.withAuth(h.handleBuildProposerMatches))
-	mux.HandleFunc("/v1/proposer/matches/commit", h.withAuth(h.handleCommitProposerMatches))
-	mux.HandleFunc("/v1/proposer/operations", h.withAuth(h.handleListProposedOperations))
-	mux.HandleFunc("/v1/proposer/operations/commit", h.withAuth(h.handleCommitProposedOperations))
+	mux.HandleFunc("/v1/intents", h.handlePublishIntent)
+	mux.HandleFunc("/v1/intents/cancel", h.handleCancelIntent)
+	mux.HandleFunc("/v1/responses", h.handlePublishResponse)
+	mux.HandleFunc("/v1/responses/cancel", h.handleCancelResponse)
+	mux.HandleFunc("/v1/finalize", h.handlePublishFinalize)
+	mux.HandleFunc("/v1/inbox", h.handleInbox)
+	mux.HandleFunc("/v1/outbox", h.handleOutbox)
+	mux.HandleFunc("/v1/matcher/candidates", h.handleListMatchCandidates)
+	mux.HandleFunc("/v1/proposer/matches", h.handleListProposerMatches)
+	mux.HandleFunc("/v1/proposer/matches/build", h.handleBuildProposerMatches)
+	mux.HandleFunc("/v1/proposer/matches/commit", h.handleCommitProposerMatches)
+	mux.HandleFunc("/v1/proposer/operations", h.handleListProposedOperations)
+	mux.HandleFunc("/v1/proposer/operations/commit", h.handleCommitProposedOperations)
 	if normalized.EnableIntentStream {
-		mux.HandleFunc("/v1/stream/intents", h.withAuth(h.handleStreamIntents))
+		mux.HandleFunc("/v1/stream/intents", h.handleStreamIntents)
 	}
 	if normalized.GossipSharedSecret != "" {
 		mux.HandleFunc("/v1/internal/gossip/intents", h.withGossipAuth(h.handleGossipIntent))
 		mux.HandleFunc("/v1/internal/gossip/responses", h.withGossipAuth(h.handleGossipResponse))
 		mux.HandleFunc("/v1/internal/gossip/finalize", h.withGossipAuth(h.handleGossipFinalize))
+		mux.HandleFunc("/v1/internal/gossip/cancel/intents", h.withGossipAuth(h.handleGossipCancelIntent))
+		mux.HandleFunc("/v1/internal/gossip/cancel/responses", h.withGossipAuth(h.handleGossipCancelResponse))
 	}
 
 	return &matchboardHTTPHandler{
@@ -94,28 +98,7 @@ type handler struct {
 
 var _ GossipIngestor = (*handler)(nil)
 
-type authedHandler func(http.ResponseWriter, *http.Request, string)
 type gossipHandler func(http.ResponseWriter, *http.Request)
-
-func (h *handler) withAuth(next authedHandler) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		principal, ok := h.authenticatePrincipal(r)
-		if !ok {
-			h.cfg.Logger.Warn("matchboard request rejected", "status", "unauthorized", "path", r.URL.Path)
-			h.writeError(w, http.StatusUnauthorized, errorCodeUnauthorized, "missing or invalid bearer token", "authorization", "", false)
-			return
-		}
-
-		now := h.cfg.NowFn()
-		if !h.rateLimiter.allow(principal, now) {
-			h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "principal", principal)
-			h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
-			return
-		}
-
-		next(w, r, principal)
-	}
-}
 
 func (h *handler) withGossipAuth(next gossipHandler) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +142,12 @@ func (h *handler) IngestGossipEnvelope(ctx context.Context, intentType string, e
 	case IntentTypeFinalize:
 		path = "/v1/internal/gossip/finalize"
 		fn = h.handleGossipFinalize
+	case IntentTypeCancelIntent:
+		path = "/v1/internal/gossip/cancel/intents"
+		fn = h.handleGossipCancelIntent
+	case IntentTypeCancelResponse:
+		path = "/v1/internal/gossip/cancel/responses"
+		fn = h.handleGossipCancelResponse
 	default:
 		return fmt.Errorf("unsupported gossip intent_type %q", intentType)
 	}
@@ -178,7 +167,7 @@ func (h *handler) IngestGossipEnvelope(ctx context.Context, intentType string, e
 	return nil
 }
 
-func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -190,8 +179,14 @@ func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request, pr
 	}
 
 	nowUnix := h.cfg.NowFn().Unix()
-	if err := validateAndNormalizeIntent(&req, principal, nowUnix); err != nil {
+	if err := validateAndNormalizeIntent(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if !h.rateLimiter.allow(req.Sender, h.cfg.NowFn()) {
+		h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "sender", req.Sender)
+		h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
 		return
 	}
 
@@ -203,7 +198,7 @@ func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request, pr
 
 	h.cfg.Logger.Info("matchboard intent stored",
 		"status", "stored",
-		"principal", principal,
+		"sender", req.Sender,
 		"pool_id", req.PoolID,
 		"intent_id", req.IntentID,
 		"intent_sign_hash", req.IntentSignHash,
@@ -223,7 +218,7 @@ func (h *handler) handlePublishIntent(w http.ResponseWriter, r *http.Request, pr
 	h.writeJSON(w, http.StatusCreated, result)
 }
 
-func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -235,8 +230,14 @@ func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request, 
 	}
 
 	nowUnix := h.cfg.NowFn().Unix()
-	if err := validateAndNormalizeResponse(&req, principal, nowUnix); err != nil {
+	if err := validateAndNormalizeResponse(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if !h.rateLimiter.allow(req.Sender, h.cfg.NowFn()) {
+		h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "sender", req.Sender)
+		h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
 		return
 	}
 
@@ -248,7 +249,7 @@ func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request, 
 
 	h.cfg.Logger.Info("matchboard response stored",
 		"status", "stored",
-		"principal", principal,
+		"sender", req.Sender,
 		"pool_id", req.PoolID,
 		"intent_id", req.IntentID,
 		"response_id", req.ResponseID,
@@ -271,7 +272,82 @@ func (h *handler) handlePublishResponse(w http.ResponseWriter, r *http.Request, 
 	h.writeJSON(w, http.StatusCreated, result)
 }
 
-func (h *handler) handlePublishFinalize(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleCancelIntent(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req CancelIntentRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if err := validateAndNormalizeCancelIntent(&req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if !h.rateLimiter.allow(req.Canceller, h.cfg.NowFn()) {
+		h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "canceller", req.Canceller)
+		h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
+		return
+	}
+
+	if err := h.store.cancelIntent(req, true); err != nil {
+		h.cfg.Logger.Warn("matchboard intent cancel failed", "error", err, "pool_id", req.PoolID, "intent_id", req.IntentID)
+		h.writeError(w, http.StatusBadRequest, errorCodeInvalidRequest, err.Error(), "", "", false)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard intent cancelled", "pool_id", req.PoolID, "intent_id", req.IntentID, "canceller", req.Canceller)
+	h.gossipPayload(r, "/v1/internal/gossip/cancel/intents", req, IntentTypeCancelIntent, req.Canceller, "", 0)
+	h.writeJSON(w, http.StatusOK, CancelIntentResponse{
+		PoolID:   req.PoolID,
+		IntentID: req.IntentID,
+		Status:   "cancelled",
+	})
+}
+
+func (h *handler) handleCancelResponse(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	var req CancelResponseRequest
+	if err := h.decodeJSONBody(r, &req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if err := validateAndNormalizeCancelResponse(&req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if !h.rateLimiter.allow(req.Canceller, h.cfg.NowFn()) {
+		h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "canceller", req.Canceller)
+		h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
+		return
+	}
+
+	if err := h.store.cancelResponse(req, true); err != nil {
+		h.cfg.Logger.Warn("matchboard response cancel failed", "error", err, "pool_id", req.PoolID, "intent_id", req.IntentID, "response_id", req.ResponseID)
+		h.writeError(w, http.StatusBadRequest, errorCodeInvalidRequest, err.Error(), "", "", false)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard response cancelled", "pool_id", req.PoolID, "intent_id", req.IntentID, "response_id", req.ResponseID, "canceller", req.Canceller)
+	h.gossipPayload(r, "/v1/internal/gossip/cancel/responses", req, IntentTypeCancelResponse, req.Canceller, "", 0)
+	h.writeJSON(w, http.StatusOK, CancelResponseResponse{
+		PoolID:     req.PoolID,
+		IntentID:   req.IntentID,
+		ResponseID: req.ResponseID,
+		Status:     "cancelled",
+	})
+}
+
+func (h *handler) handlePublishFinalize(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -283,8 +359,14 @@ func (h *handler) handlePublishFinalize(w http.ResponseWriter, r *http.Request, 
 	}
 
 	nowUnix := h.cfg.NowFn().Unix()
-	if err := validateAndNormalizeFinalize(&req, principal, nowUnix); err != nil {
+	if err := validateAndNormalizeFinalize(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if !h.rateLimiter.allow(req.Sender, h.cfg.NowFn()) {
+		h.cfg.Logger.Warn("matchboard request rejected", "status", "rate_limited", "path", r.URL.Path, "sender", req.Sender)
+		h.writeError(w, http.StatusTooManyRequests, errorCodeRateLimited, "rate limit exceeded", "", "", true)
 		return
 	}
 
@@ -296,7 +378,7 @@ func (h *handler) handlePublishFinalize(w http.ResponseWriter, r *http.Request, 
 
 	h.cfg.Logger.Info("matchboard finalize stored",
 		"status", "stored",
-		"principal", principal,
+		"sender", req.Sender,
 		"pool_id", req.PoolID,
 		"intent_id", req.IntentID,
 		"response_id", req.ResponseID,
@@ -349,7 +431,7 @@ func (h *handler) handleGossipIntent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateAndNormalizeIntent(&req, req.Sender, nowUnix); err != nil {
+	if err := validateAndNormalizeIntent(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
 		return
 	}
@@ -419,7 +501,7 @@ func (h *handler) handleGossipResponse(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateAndNormalizeResponse(&req, req.Sender, nowUnix); err != nil {
+	if err := validateAndNormalizeResponse(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
 		return
 	}
@@ -494,7 +576,7 @@ func (h *handler) handleGossipFinalize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := validateAndNormalizeFinalize(&req, req.Sender, nowUnix); err != nil {
+	if err := validateAndNormalizeFinalize(&req, nowUnix); err != nil {
 		h.handleValidationFailure(w, err)
 		return
 	}
@@ -544,20 +626,100 @@ func (h *handler) handleGossipFinalize(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusCreated, result)
 }
 
-func (h *handler) handleInbox(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleGossipCancelIntent(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	body, err := h.readBodyLimited(r)
+	if err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	nowUnix := h.cfg.NowFn().Unix()
+	req, env, duplicate, err := h.decodeGossipCancelIntentBody(body, nowUnix)
+	if err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+	if duplicate {
+		h.writeJSON(w, http.StatusOK, CancelIntentResponse{PoolID: req.PoolID, IntentID: req.IntentID, Status: "cancelled"})
+		return
+	}
+
+	if err := validateAndNormalizeCancelIntent(&req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if err := h.store.cancelIntent(req, false); err != nil {
+		if errors.Is(err, errIntentCancelled) {
+			h.writeJSON(w, http.StatusOK, CancelIntentResponse{PoolID: req.PoolID, IntentID: req.IntentID, Status: "cancelled"})
+			return
+		}
+		h.handleStoreError(w, err, "cancel_intent", req.PoolID, req.IntentID, "")
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard intent cancel gossiped",
+		"pool_id", req.PoolID, "intent_id", req.IntentID,
+		"origin", strings.TrimSpace(r.Header.Get(headerGossipOrigin)),
+	)
+	h.forwardGossipEnvelope(r, IntentTypeCancelIntent, "/v1/internal/gossip/cancel/intents", env)
+	h.writeJSON(w, http.StatusOK, CancelIntentResponse{PoolID: req.PoolID, IntentID: req.IntentID, Status: "cancelled"})
+}
+
+func (h *handler) handleGossipCancelResponse(w http.ResponseWriter, r *http.Request) {
+	if !h.requireMethod(w, r, http.MethodPost) {
+		return
+	}
+
+	body, err := h.readBodyLimited(r)
+	if err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	nowUnix := h.cfg.NowFn().Unix()
+	req, env, duplicate, err := h.decodeGossipCancelResponseBody(body, nowUnix)
+	if err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+	if duplicate {
+		h.writeJSON(w, http.StatusOK, CancelResponseResponse{PoolID: req.PoolID, IntentID: req.IntentID, ResponseID: req.ResponseID, Status: "cancelled"})
+		return
+	}
+
+	if err := validateAndNormalizeCancelResponse(&req); err != nil {
+		h.handleValidationFailure(w, err)
+		return
+	}
+
+	if err := h.store.cancelResponse(req, false); err != nil {
+		if errors.Is(err, errResponseCancelled) {
+			h.writeJSON(w, http.StatusOK, CancelResponseResponse{PoolID: req.PoolID, IntentID: req.IntentID, ResponseID: req.ResponseID, Status: "cancelled"})
+			return
+		}
+		h.handleStoreError(w, err, "cancel_response", req.PoolID, req.IntentID, req.ResponseID)
+		return
+	}
+
+	h.cfg.Logger.Info("matchboard response cancel gossiped",
+		"pool_id", req.PoolID, "intent_id", req.IntentID, "response_id", req.ResponseID,
+		"origin", strings.TrimSpace(r.Header.Get(headerGossipOrigin)),
+	)
+	h.forwardGossipEnvelope(r, IntentTypeCancelResponse, "/v1/internal/gossip/cancel/responses", env)
+	h.writeJSON(w, http.StatusOK, CancelResponseResponse{PoolID: req.PoolID, IntentID: req.IntentID, ResponseID: req.ResponseID, Status: "cancelled"})
+}
+
+func (h *handler) handleInbox(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	recipient := strings.TrimSpace(r.URL.Query().Get("recipient"))
-	if recipient == "" {
-		recipient = principal
-	}
-	if recipient != principal {
-		h.cfg.Logger.Warn("matchboard inbox forbidden", "status", "forbidden", "principal", principal, "recipient", recipient)
-		h.writeError(w, http.StatusForbidden, errorCodeForbidden, "recipient must match authenticated principal", "recipient", "", false)
-		return
-	}
 
 	cursor, limit, err := h.parsePagination(r)
 	if err != nil {
@@ -575,7 +737,6 @@ func (h *handler) handleInbox(w http.ResponseWriter, r *http.Request, principal 
 
 	h.cfg.Logger.Info("matchboard inbox listed",
 		"status", "ok",
-		"principal", principal,
 		"recipient", recipient,
 		"record_count", len(records),
 		"total", total,
@@ -583,20 +744,12 @@ func (h *handler) handleInbox(w http.ResponseWriter, r *http.Request, principal 
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleOutbox(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleOutbox(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
 
 	sender := strings.TrimSpace(r.URL.Query().Get("sender"))
-	if sender == "" {
-		sender = principal
-	}
-	if sender != principal {
-		h.cfg.Logger.Warn("matchboard outbox forbidden", "status", "forbidden", "principal", principal, "sender", sender)
-		h.writeError(w, http.StatusForbidden, errorCodeForbidden, "sender must match authenticated principal", "sender", "", false)
-		return
-	}
 
 	cursor, limit, err := h.parsePagination(r)
 	if err != nil {
@@ -614,7 +767,6 @@ func (h *handler) handleOutbox(w http.ResponseWriter, r *http.Request, principal
 
 	h.cfg.Logger.Info("matchboard outbox listed",
 		"status", "ok",
-		"principal", principal,
 		"sender", sender,
 		"record_count", len(records),
 		"total", total,
@@ -622,7 +774,7 @@ func (h *handler) handleOutbox(w http.ResponseWriter, r *http.Request, principal
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -635,7 +787,7 @@ func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Re
 
 	operations, canonicalBatchHash, totalPending := h.store.listProposedOperations(limit, h.cfg.NowFn().Unix())
 	resp := listProposedOperationsResponse{
-		Proposer:           principal,
+		Proposer:           strings.TrimSpace(r.URL.Query().Get("proposer")),
 		Operations:         operations,
 		CanonicalBatchHash: canonicalBatchHash,
 		TotalPending:       totalPending,
@@ -643,7 +795,6 @@ func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Re
 
 	h.cfg.Logger.Info("matchboard proposer operations listed",
 		"status", "ok",
-		"principal", principal,
 		"operation_count", len(operations),
 		"total_pending", totalPending,
 		"canonical_batch_hash", canonicalBatchHash,
@@ -651,7 +802,7 @@ func (h *handler) handleListProposedOperations(w http.ResponseWriter, r *http.Re
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleListMatchCandidates(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleListMatchCandidates(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -662,11 +813,15 @@ func (h *handler) handleListMatchCandidates(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	address := strings.TrimSpace(r.URL.Query().Get("address"))
 	allCandidates, _ := h.store.listMatchCandidates(0, h.cfg.NowFn().Unix())
-	filtered := make([]MatchCandidate, 0, len(allCandidates))
-	for _, candidate := range allCandidates {
-		if identitiesEqual(candidate.Requester, principal) || identitiesEqual(candidate.Responder, principal) {
-			filtered = append(filtered, candidate)
+	filtered := allCandidates
+	if address != "" {
+		filtered = make([]MatchCandidate, 0, len(allCandidates))
+		for _, candidate := range allCandidates {
+			if identitiesEqual(candidate.Requester, address) || identitiesEqual(candidate.Responder, address) {
+				filtered = append(filtered, candidate)
+			}
 		}
 	}
 	if limit <= 0 || limit > len(filtered) {
@@ -678,21 +833,21 @@ func (h *handler) handleListMatchCandidates(w http.ResponseWriter, r *http.Reque
 	}
 
 	resp := listMatchCandidatesResponse{
-		Matcher:    principal,
+		Matcher:    address,
 		Candidates: page,
 		Total:      uint64(len(filtered)),
 	}
 
 	h.cfg.Logger.Info("matchboard matcher candidates listed",
 		"status", "ok",
-		"principal", principal,
+		"address", address,
 		"candidate_count", len(page),
 		"total", len(filtered),
 	)
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleListProposerMatches(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleListProposerMatches(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -705,7 +860,7 @@ func (h *handler) handleListProposerMatches(w http.ResponseWriter, r *http.Reque
 
 	matches, canonicalHash, total := h.store.listProposerMatches(limit, h.cfg.NowFn().Unix())
 	resp := listProposerMatchesResponse{
-		Proposer:                principal,
+		Proposer:                strings.TrimSpace(r.URL.Query().Get("proposer")),
 		Matches:                 matches,
 		CanonicalMatchBatchHash: canonicalHash,
 		TotalPending:            total,
@@ -713,7 +868,6 @@ func (h *handler) handleListProposerMatches(w http.ResponseWriter, r *http.Reque
 
 	h.cfg.Logger.Info("matchboard proposer matches listed",
 		"status", "ok",
-		"principal", principal,
 		"match_count", len(matches),
 		"total_pending", total,
 		"canonical_match_batch_hash", canonicalHash,
@@ -721,7 +875,7 @@ func (h *handler) handleListProposerMatches(w http.ResponseWriter, r *http.Reque
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -740,7 +894,6 @@ func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Req
 	if err != nil {
 		h.cfg.Logger.Warn("matchboard proposer match commit rejected",
 			"status", "rejected",
-			"principal", principal,
 			"reason", err.Error(),
 		)
 		switch {
@@ -757,7 +910,7 @@ func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Req
 	}
 
 	resp := commitProposerMatchesResponse{
-		Proposer:                principal,
+		Proposer:                "",
 		Committed:               committed,
 		Remaining:               remaining,
 		CanonicalMatchBatchHash: canonicalHash,
@@ -765,7 +918,6 @@ func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Req
 
 	h.cfg.Logger.Info("matchboard proposer match commit applied",
 		"status", "ok",
-		"principal", principal,
 		"committed", committed,
 		"remaining", remaining,
 		"canonical_match_batch_hash", canonicalHash,
@@ -773,7 +925,7 @@ func (h *handler) handleCommitProposerMatches(w http.ResponseWriter, r *http.Req
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -789,13 +941,6 @@ func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Requ
 	}
 
 	submitter := strings.TrimSpace(req.Submitter)
-	if submitter == "" {
-		submitter = principal
-	}
-	if !identitiesEqual(submitter, principal) {
-		h.writeError(w, http.StatusForbidden, errorCodeForbidden, "submitter must match authenticated principal", "submitter", "", false)
-		return
-	}
 
 	requireCertificate := true
 	if req.RequireCertificate != nil {
@@ -806,7 +951,6 @@ func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Requ
 	if err != nil {
 		h.cfg.Logger.Warn("matchboard proposer match build rejected",
 			"status", "rejected",
-			"principal", principal,
 			"submitter", submitter,
 			"reason", err.Error(),
 		)
@@ -830,7 +974,7 @@ func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Requ
 	}
 
 	resp := buildProposerMatchesResponse{
-		Proposer:           principal,
+		Proposer:           "",
 		Submitter:          submitter,
 		Items:              items,
 		CanonicalBuildHash: canonicalHash,
@@ -839,7 +983,6 @@ func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Requ
 
 	h.cfg.Logger.Info("matchboard proposer match build generated",
 		"status", "ok",
-		"principal", principal,
 		"submitter", submitter,
 		"item_count", len(items),
 		"canonical_build_hash", canonicalHash,
@@ -847,7 +990,7 @@ func (h *handler) handleBuildProposerMatches(w http.ResponseWriter, r *http.Requ
 	h.writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodPost) {
 		return
 	}
@@ -866,7 +1009,6 @@ func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.
 	if err != nil {
 		h.cfg.Logger.Warn("matchboard proposer operation commit rejected",
 			"status", "rejected",
-			"principal", principal,
 			"reason", err.Error(),
 		)
 		switch {
@@ -883,7 +1025,7 @@ func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.
 	}
 
 	resp := commitProposedOperationsResponse{
-		Proposer:           principal,
+		Proposer:           "",
 		Committed:          committed,
 		Remaining:          remaining,
 		CanonicalBatchHash: canonicalBatchHash,
@@ -891,7 +1033,6 @@ func (h *handler) handleCommitProposedOperations(w http.ResponseWriter, r *http.
 
 	h.cfg.Logger.Info("matchboard proposer operation commit applied",
 		"status", "ok",
-		"principal", principal,
 		"committed", committed,
 		"remaining", remaining,
 		"canonical_batch_hash", canonicalBatchHash,
@@ -943,24 +1084,6 @@ func (h *handler) parseLimit(r *http.Request) (int, error) {
 	return v, nil
 }
 
-func (h *handler) authenticatePrincipal(r *http.Request) (string, bool) {
-	header := strings.TrimSpace(r.Header.Get("Authorization"))
-	if header == "" {
-		return "", false
-	}
-
-	parts := strings.Fields(header)
-	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
-		return "", false
-	}
-
-	principal, ok := h.cfg.TokenPrincipalMap[parts[1]]
-	if !ok {
-		return "", false
-	}
-
-	return principal, true
-}
 
 func (h *handler) decodeJSONBody(r *http.Request, dst any) error {
 	payload, err := h.readBodyLimited(r)
@@ -1022,6 +1145,10 @@ func (h *handler) handleStoreError(w http.ResponseWriter, err error, artifactTyp
 		h.writeError(w, http.StatusNotFound, errorCodeNotFound, "referenced intent not found", "intent_id", "", false)
 	case errors.Is(err, errResponseNotFound):
 		h.writeError(w, http.StatusNotFound, errorCodeNotFound, "referenced response not found", "response_id", "", false)
+	case errors.Is(err, errIntentCancelled):
+		h.writeError(w, http.StatusBadRequest, errorCodeStateConflict, "intent has been cancelled", "intent_id", "", false)
+	case errors.Is(err, errResponseCancelled):
+		h.writeError(w, http.StatusBadRequest, errorCodeStateConflict, "response has been cancelled", "response_id", "", false)
 	case errors.Is(err, errHashMismatch):
 		h.writeError(w, http.StatusConflict, errorCodeHashMismatch, "hash binding mismatch", "", "dependent sign hash does not match stored record", false)
 	case errors.Is(err, errOperationBuildFailed):
@@ -1189,6 +1316,14 @@ func (h *handler) decodeGossipResponseBody(body []byte, nowUnix int64) (PublishR
 
 func (h *handler) decodeGossipFinalizeBody(body []byte, nowUnix int64) (PublishFinalizeRequest, *GossipEnvelope, bool, error) {
 	return decodeGossipBody[PublishFinalizeRequest](h, body, nowUnix, IntentTypeFinalize)
+}
+
+func (h *handler) decodeGossipCancelIntentBody(body []byte, nowUnix int64) (CancelIntentRequest, *GossipEnvelope, bool, error) {
+	return decodeGossipBody[CancelIntentRequest](h, body, nowUnix, IntentTypeCancelIntent)
+}
+
+func (h *handler) decodeGossipCancelResponseBody(body []byte, nowUnix int64) (CancelResponseRequest, *GossipEnvelope, bool, error) {
+	return decodeGossipBody[CancelResponseRequest](h, body, nowUnix, IntentTypeCancelResponse)
 }
 
 func decodeGossipBody[T any](h *handler, body []byte, nowUnix int64, expectedIntentType string) (T, *GossipEnvelope, bool, error) {

@@ -1,10 +1,12 @@
 package matchboard
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/url"
 	"strings"
 	"time"
@@ -27,21 +29,6 @@ func (e *validationError) Error() string {
 }
 
 func normalizeConfig(cfg Config) (Config, error) {
-	if len(cfg.TokenPrincipalMap) == 0 {
-		return Config{}, errors.New("token principal map must not be empty")
-	}
-
-	normalizedMap := make(map[string]string, len(cfg.TokenPrincipalMap))
-	for token, principal := range cfg.TokenPrincipalMap {
-		token = strings.TrimSpace(token)
-		principal = strings.TrimSpace(principal)
-		if token == "" || principal == "" {
-			return Config{}, errors.New("token principal map contains empty token or principal")
-		}
-		normalizedMap[token] = principal
-	}
-	cfg.TokenPrincipalMap = normalizedMap
-
 	if cfg.RateLimitRequests <= 0 {
 		cfg.RateLimitRequests = defaultRateLimitRequests
 	}
@@ -121,7 +108,7 @@ func normalizeConfig(cfg Config) (Config, error) {
 	return cfg, nil
 }
 
-func validateAndNormalizeIntent(req *PublishIntentRequest, principal string, nowUnix int64) error {
+func validateAndNormalizeIntent(req *PublishIntentRequest, nowUnix int64) error {
 	if strings.TrimSpace(req.PoolID) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "pool_id", message: "pool_id is required"}
 	}
@@ -131,11 +118,14 @@ func validateAndNormalizeIntent(req *PublishIntentRequest, principal string, now
 	if strings.TrimSpace(req.Sender) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender is required"}
 	}
-	if !identitiesEqual(req.Sender, principal) {
-		return &validationError{code: errorCodeSignerMismatch, field: "sender", message: "sender must match authenticated principal"}
+	if !common.IsHexAddress(req.Sender) {
+		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender must be a valid Ethereum address"}
 	}
 	if strings.TrimSpace(req.Recipient) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient is required"}
+	}
+	if !common.IsHexAddress(req.Recipient) {
+		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient must be a valid Ethereum address"}
 	}
 	if req.ExpiresUnix < nowUnix {
 		return &validationError{code: errorCodeExpired, field: "expires_unix", message: "artifact is expired"}
@@ -158,17 +148,20 @@ func validateAndNormalizeIntent(req *PublishIntentRequest, principal string, now
 		return err
 	}
 
+	if err := validateOffer("offer", req.Offer); err != nil {
+		return err
+	}
 	if err := validateSignatureMetadata("signature", req.Signature, req.Sender); err != nil {
 		return err
 	}
-	if err := validateEthereumSignatureIfRequired("signature", req.IntentSignHash, req.Sender, req.Signature); err != nil {
+	if err := validateEthereumSignature("signature", req.IntentSignHash, req.Sender, req.Signature); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateAndNormalizeResponse(req *PublishResponseRequest, principal string, nowUnix int64) error {
+func validateAndNormalizeResponse(req *PublishResponseRequest, nowUnix int64) error {
 	if strings.TrimSpace(req.PoolID) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "pool_id", message: "pool_id is required"}
 	}
@@ -181,11 +174,14 @@ func validateAndNormalizeResponse(req *PublishResponseRequest, principal string,
 	if strings.TrimSpace(req.Sender) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender is required"}
 	}
-	if !identitiesEqual(req.Sender, principal) {
-		return &validationError{code: errorCodeSignerMismatch, field: "sender", message: "sender must match authenticated principal"}
+	if !common.IsHexAddress(req.Sender) {
+		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender must be a valid Ethereum address"}
 	}
 	if strings.TrimSpace(req.Recipient) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient is required"}
+	}
+	if !common.IsHexAddress(req.Recipient) {
+		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient must be a valid Ethereum address"}
 	}
 	if req.ExpiresUnix < nowUnix {
 		return &validationError{code: errorCodeExpired, field: "expires_unix", message: "artifact is expired"}
@@ -211,17 +207,32 @@ func validateAndNormalizeResponse(req *PublishResponseRequest, principal string,
 		return err
 	}
 
+	if err := validateOffer("offer", req.Offer); err != nil {
+		return err
+	}
+	if err := validateResponseType(req.ResponseType); err != nil {
+		return err
+	}
 	if err := validateSignatureMetadata("signature", req.Signature, req.Sender); err != nil {
 		return err
 	}
-	if err := validateEthereumSignatureIfRequired("signature", req.ResponseSignHash, req.Sender, req.Signature); err != nil {
+	if err := validateEthereumSignature("signature", req.ResponseSignHash, req.Sender, req.Signature); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func validateAndNormalizeFinalize(req *PublishFinalizeRequest, principal string, nowUnix int64) error {
+func validateResponseType(rt string) error {
+	switch rt {
+	case "ACCEPT", "COUNTER_OFFER":
+		return nil
+	default:
+		return &validationError{code: errorCodeInvalidRequest, field: "response_type", message: "response_type must be ACCEPT or COUNTER_OFFER"}
+	}
+}
+
+func validateAndNormalizeFinalize(req *PublishFinalizeRequest, nowUnix int64) error {
 	if strings.TrimSpace(req.PoolID) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "pool_id", message: "pool_id is required"}
 	}
@@ -237,11 +248,14 @@ func validateAndNormalizeFinalize(req *PublishFinalizeRequest, principal string,
 	if strings.TrimSpace(req.Sender) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender is required"}
 	}
-	if !identitiesEqual(req.Sender, principal) {
-		return &validationError{code: errorCodeSignerMismatch, field: "sender", message: "sender must match authenticated principal"}
+	if !common.IsHexAddress(req.Sender) {
+		return &validationError{code: errorCodeInvalidRequest, field: "sender", message: "sender must be a valid Ethereum address"}
 	}
 	if strings.TrimSpace(req.Recipient) == "" {
 		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient is required"}
+	}
+	if !common.IsHexAddress(req.Recipient) {
+		return &validationError{code: errorCodeInvalidRequest, field: "recipient", message: "recipient must be a valid Ethereum address"}
 	}
 	if req.ExpiresUnix < nowUnix {
 		return &validationError{code: errorCodeExpired, field: "expires_unix", message: "artifact is expired"}
@@ -270,10 +284,10 @@ func validateAndNormalizeFinalize(req *PublishFinalizeRequest, principal string,
 	if err := validateSignatureMetadata("responder_signature", req.ResponderSignature, req.Recipient); err != nil {
 		return err
 	}
-	if err := validateEthereumSignatureIfRequired("initiator_signature", req.FinalizeSignHash, req.Sender, req.InitiatorSignature); err != nil {
+	if err := validateEthereumSignature("initiator_signature", req.FinalizeSignHash, req.Sender, req.InitiatorSignature); err != nil {
 		return err
 	}
-	if err := validateEthereumSignatureIfRequired("responder_signature", req.FinalizeSignHash, req.Recipient, req.ResponderSignature); err != nil {
+	if err := validateEthereumSignature("responder_signature", req.FinalizeSignHash, req.Recipient, req.ResponderSignature); err != nil {
 		return err
 	}
 
@@ -347,13 +361,11 @@ func validateSignatureMetadata(field string, sig SignatureMetadata, expectedSign
 	}
 
 	sigAlgorithm := strings.ToLower(strings.TrimSpace(sig.Algorithm))
-	switch sigAlgorithm {
-	case SignatureAlgorithmSecp256k1, SignatureAlgorithmEd25519:
-	default:
+	if sigAlgorithm != SignatureAlgorithmSecp256k1 {
 		return &validationError{
 			code:    errorCodeInvalidRequest,
 			field:   field + ".algorithm",
-			message: fmt.Sprintf("unsupported signature algorithm: %q", sig.Algorithm),
+			message: fmt.Sprintf("unsupported signature algorithm: %q, only secp256k1 is accepted", sig.Algorithm),
 		}
 	}
 
@@ -400,6 +412,62 @@ func normalizeOptionalHash(field, value string) (string, error) {
 	return normalized, nil
 }
 
+// validateOffer validates the optional Offer fields. All four fields must be
+// provided together or all omitted. Asset fields must be "native" or a valid
+// Ethereum hex address. Amount fields must be positive uint256 decimal strings.
+func validateOffer(fieldPrefix string, offer Offer) error {
+	hasAny := offer.AssetIn != "" || offer.AmountIn != "" || offer.AssetOut != "" || offer.AmountOut != ""
+	if !hasAny {
+		return nil
+	}
+	if offer.AssetIn == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: fieldPrefix + ".asset_in", message: "asset_in is required when offer is provided"}
+	}
+	if offer.AmountIn == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: fieldPrefix + ".amount_in", message: "amount_in is required when offer is provided"}
+	}
+	if offer.AssetOut == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: fieldPrefix + ".asset_out", message: "asset_out is required when offer is provided"}
+	}
+	if offer.AmountOut == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: fieldPrefix + ".amount_out", message: "amount_out is required when offer is provided"}
+	}
+	if err := validateOfferAsset(fieldPrefix+".asset_in", offer.AssetIn); err != nil {
+		return err
+	}
+	if err := validateOfferAsset(fieldPrefix+".asset_out", offer.AssetOut); err != nil {
+		return err
+	}
+	if err := validateOfferAmount(fieldPrefix+".amount_in", offer.AmountIn); err != nil {
+		return err
+	}
+	if err := validateOfferAmount(fieldPrefix+".amount_out", offer.AmountOut); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateOfferAsset(field, value string) error {
+	if strings.EqualFold(value, NativeAsset) {
+		return nil
+	}
+	if !common.IsHexAddress(value) {
+		return &validationError{code: errorCodeInvalidRequest, field: field, message: `asset must be "native" or a valid Ethereum address`}
+	}
+	return nil
+}
+
+func validateOfferAmount(field, value string) error {
+	n := new(big.Int)
+	if _, ok := n.SetString(strings.TrimSpace(value), 10); !ok {
+		return &validationError{code: errorCodeInvalidRequest, field: field, message: "amount must be a decimal integer string"}
+	}
+	if n.Sign() <= 0 {
+		return &validationError{code: errorCodeInvalidRequest, field: field, message: "amount must be greater than zero"}
+	}
+	return nil
+}
+
 func normalizeHash(value string) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" {
@@ -417,4 +485,55 @@ func normalizeHash(value string) (string, error) {
 	}
 
 	return strings.ToLower(trimmed), nil
+}
+
+// validateAndNormalizeCancelIntent validates a CancelIntentRequest.
+// The signature must cover sha256("CANCEL_INTENT:" + pool_id + ":" + intent_id).
+func validateAndNormalizeCancelIntent(req *CancelIntentRequest) error {
+	if strings.TrimSpace(req.PoolID) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "pool_id", message: "pool_id is required"}
+	}
+	if strings.TrimSpace(req.IntentID) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "intent_id", message: "intent_id is required"}
+	}
+	if strings.TrimSpace(req.Canceller) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "canceller", message: "canceller is required"}
+	}
+	if !common.IsHexAddress(req.Canceller) {
+		return &validationError{code: errorCodeInvalidRequest, field: "canceller", message: "canceller must be a valid Ethereum address"}
+	}
+	if err := validateSignatureMetadata("signature", req.Signature, req.Canceller); err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("CANCEL_INTENT:%d:%s:%d:%s", len(req.PoolID), req.PoolID, len(req.IntentID), req.IntentID)
+	sum := sha256.Sum256([]byte(msg))
+	signHashHex := hex.EncodeToString(sum[:])
+	return validateEthereumSignature("signature", signHashHex, req.Canceller, req.Signature)
+}
+
+// validateAndNormalizeCancelResponse validates a CancelResponseRequest.
+// The signature must cover sha256("CANCEL_RESPONSE:" + pool_id + ":" + intent_id + ":" + response_id).
+func validateAndNormalizeCancelResponse(req *CancelResponseRequest) error {
+	if strings.TrimSpace(req.PoolID) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "pool_id", message: "pool_id is required"}
+	}
+	if strings.TrimSpace(req.IntentID) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "intent_id", message: "intent_id is required"}
+	}
+	if strings.TrimSpace(req.ResponseID) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "response_id", message: "response_id is required"}
+	}
+	if strings.TrimSpace(req.Canceller) == "" {
+		return &validationError{code: errorCodeInvalidRequest, field: "canceller", message: "canceller is required"}
+	}
+	if !common.IsHexAddress(req.Canceller) {
+		return &validationError{code: errorCodeInvalidRequest, field: "canceller", message: "canceller must be a valid Ethereum address"}
+	}
+	if err := validateSignatureMetadata("signature", req.Signature, req.Canceller); err != nil {
+		return err
+	}
+	msg := fmt.Sprintf("CANCEL_RESPONSE:%d:%s:%d:%s:%d:%s", len(req.PoolID), req.PoolID, len(req.IntentID), req.IntentID, len(req.ResponseID), req.ResponseID)
+	sum := sha256.Sum256([]byte(msg))
+	signHashHex := hex.EncodeToString(sum[:])
+	return validateEthereumSignature("signature", signHashHex, req.Canceller, req.Signature)
 }

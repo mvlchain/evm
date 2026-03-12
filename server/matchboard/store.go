@@ -16,9 +16,11 @@ var (
 	errIntentExists            = errors.New("intent already exists")
 	errIntentNotFound          = errors.New("intent not found")
 	errIntentExpired           = errors.New("intent is expired")
+	errIntentCancelled         = errors.New("intent has been cancelled")
 	errResponseExists          = errors.New("response already exists")
 	errResponseNotFound        = errors.New("response not found")
 	errResponseExpired         = errors.New("response is expired")
+	errResponseCancelled       = errors.New("response has been cancelled")
 	errFinalizeExists          = errors.New("finalize already exists")
 	errHashMismatch            = errors.New("hash mismatch")
 	errOperationNotFound       = errors.New("proposed operation not found")
@@ -58,6 +60,7 @@ type intentRecord struct {
 	recipient      string
 	contextHash    string
 	intentSignHash string
+	offer          Offer
 	expiresUnix    int64
 	createdUnix    int64
 }
@@ -71,6 +74,7 @@ type responseRecord struct {
 	contextHash      string
 	intentSignHash   string
 	responseSignHash string
+	offer            Offer
 	expiresUnix      int64
 	createdUnix      int64
 }
@@ -100,11 +104,13 @@ type inMemoryStore struct {
 	// responsesByIntent indexes accept intents by request intent.
 	responsesByIntent map[intentKey][]responseRecord
 
-	inboxByRecipient map[string][]BoardRecord
-	outboxBySender   map[string][]BoardRecord
-	pendingOps       map[string]ProposedOperation
-	enableABCI       bool
-	matcherShards    int
+	inboxByRecipient  map[string][]BoardRecord
+	outboxBySender    map[string][]BoardRecord
+	pendingOps        map[string]ProposedOperation
+	enableABCI        bool
+	matcherShards     int
+	cancelledIntents  map[intentKey]string   // intentKey → canceller address
+	cancelledResponses map[responseKey]string // responseKey → canceller address
 }
 
 func newInMemoryStore(enableABCI bool, matcherShards int) *inMemoryStore {
@@ -112,15 +118,17 @@ func newInMemoryStore(enableABCI bool, matcherShards int) *inMemoryStore {
 		matcherShards = defaultMatcherShardCount
 	}
 	return &inMemoryStore{
-		intents:           make(map[intentKey]intentRecord),
-		responses:         make(map[responseKey]responseRecord),
-		finalizes:         make(map[finalizeKey]finalizeRecord),
-		responsesByIntent: make(map[intentKey][]responseRecord),
-		inboxByRecipient:  make(map[string][]BoardRecord),
-		outboxBySender:    make(map[string][]BoardRecord),
-		pendingOps:        make(map[string]ProposedOperation),
-		enableABCI:        enableABCI,
-		matcherShards:     matcherShards,
+		intents:            make(map[intentKey]intentRecord),
+		responses:          make(map[responseKey]responseRecord),
+		finalizes:          make(map[finalizeKey]finalizeRecord),
+		responsesByIntent:  make(map[intentKey][]responseRecord),
+		inboxByRecipient:   make(map[string][]BoardRecord),
+		outboxBySender:     make(map[string][]BoardRecord),
+		pendingOps:         make(map[string]ProposedOperation),
+		enableABCI:         enableABCI,
+		matcherShards:      matcherShards,
+		cancelledIntents:   make(map[intentKey]string),
+		cancelledResponses: make(map[responseKey]string),
 	}
 }
 
@@ -142,6 +150,7 @@ func (s *inMemoryStore) createIntent(req PublishIntentRequest, nowUnix int64) (p
 		recipient:      req.Recipient,
 		contextHash:    req.ContextHash,
 		intentSignHash: req.IntentSignHash,
+		offer:          req.Offer,
 		expiresUnix:    req.ExpiresUnix,
 		createdUnix:    nowUnix,
 	}
@@ -156,6 +165,7 @@ func (s *inMemoryStore) createIntent(req PublishIntentRequest, nowUnix int64) (p
 		CreatedUnix:    nowUnix,
 		ContextHash:    req.ContextHash,
 		IntentSignHash: req.IntentSignHash,
+		Offer:          req.Offer,
 	}
 	appendBoardRecord(s.inboxByRecipient, req.Recipient, boardRecord)
 	appendBoardRecord(s.outboxBySender, req.Sender, boardRecord)
@@ -202,6 +212,7 @@ func (s *inMemoryStore) createResponse(req PublishResponseRequest, nowUnix int64
 		contextHash:      req.ContextHash,
 		intentSignHash:   req.IntentSignHash,
 		responseSignHash: req.ResponseSignHash,
+		offer:            req.Offer,
 		expiresUnix:      req.ExpiresUnix,
 		createdUnix:      nowUnix,
 	}
@@ -219,6 +230,7 @@ func (s *inMemoryStore) createResponse(req PublishResponseRequest, nowUnix int64
 		ContextHash:      req.ContextHash,
 		IntentSignHash:   req.IntentSignHash,
 		ResponseSignHash: req.ResponseSignHash,
+		Offer:            req.Offer,
 	}
 	appendBoardRecord(s.inboxByRecipient, req.Recipient, boardRecord)
 	appendBoardRecord(s.outboxBySender, req.Sender, boardRecord)
@@ -248,6 +260,9 @@ func (s *inMemoryStore) createFinalize(req PublishFinalizeRequest, nowUnix int64
 	if !ok {
 		return publishFinalizeResponse{}, errIntentNotFound
 	}
+	if _, cancelled := s.cancelledIntents[intentK]; cancelled {
+		return publishFinalizeResponse{}, errIntentCancelled
+	}
 	if intent.expiresUnix < nowUnix {
 		return publishFinalizeResponse{}, errIntentExpired
 	}
@@ -258,6 +273,9 @@ func (s *inMemoryStore) createFinalize(req PublishFinalizeRequest, nowUnix int64
 	response, ok := s.responses[responseK]
 	if !ok {
 		return publishFinalizeResponse{}, errResponseNotFound
+	}
+	if _, cancelled := s.cancelledResponses[responseK]; cancelled {
+		return publishFinalizeResponse{}, errResponseCancelled
 	}
 	if response.expiresUnix < nowUnix {
 		return publishFinalizeResponse{}, errResponseExpired
@@ -610,6 +628,9 @@ func (s *inMemoryStore) snapshotMatcherState(nowUnix int64) ([]indexedIntent, ma
 
 	intents := make([]indexedIntent, 0, len(s.intents))
 	for key, rec := range s.intents {
+		if _, cancelled := s.cancelledIntents[key]; cancelled {
+			continue
+		}
 		intents = append(intents, indexedIntent{
 			key:    key,
 			record: rec,
@@ -618,9 +639,19 @@ func (s *inMemoryStore) snapshotMatcherState(nowUnix int64) ([]indexedIntent, ma
 
 	responsesByIntent := make(map[intentKey][]responseRecord, len(s.responsesByIntent))
 	for key, responses := range s.responsesByIntent {
-		copied := make([]responseRecord, len(responses))
-		copy(copied, responses)
-		responsesByIntent[key] = copied
+		if _, cancelled := s.cancelledIntents[key]; cancelled {
+			continue
+		}
+		filtered := make([]responseRecord, 0, len(responses))
+		for _, r := range responses {
+			rk := responseKey{poolID: r.poolID, intentID: r.intentID, responseID: r.responseID}
+			if _, cancelled := s.cancelledResponses[rk]; !cancelled {
+				filtered = append(filtered, r)
+			}
+		}
+		if len(filtered) > 0 {
+			responsesByIntent[key] = filtered
+		}
 	}
 
 	return intents, responsesByIntent
@@ -1223,4 +1254,73 @@ func cloneOperationBytes(value []byte) []byte {
 	out := make([]byte, len(value))
 	copy(out, value)
 	return out
+}
+
+// cancelIntent marks an intent as cancelled off-chain.
+// If requireExists is true (public API path), returns an error when the intent is not found.
+// If requireExists is false (gossip path), writes a pre-cancel tombstone even when the intent
+// hasn't arrived yet — prevents a match if the intent gossip arrives later out of order.
+func (s *inMemoryStore) cancelIntent(req CancelIntentRequest, requireExists bool) error {
+	k := intentKey{poolID: req.PoolID, intentID: req.IntentID}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, exists := s.intents[k]
+	if !exists {
+		if requireExists {
+			return fmt.Errorf("intent not found: %s/%s", req.PoolID, req.IntentID)
+		}
+		// Gossip path: signature already verified on origin. Write tombstone preemptively
+		// so the intent is excluded from matching even if its gossip arrives later.
+		s.cancelledIntents[k] = req.Canceller
+		return nil
+	}
+	if !identitiesEqual(rec.sender, req.Canceller) {
+		return fmt.Errorf("canceller %s is not the intent initiator", req.Canceller)
+	}
+	s.cancelledIntents[k] = req.Canceller
+	return nil
+}
+
+// cancelResponse marks a response as cancelled off-chain.
+// If requireExists is true (public API path), returns an error when the response is not found.
+// If requireExists is false (gossip path), writes a pre-cancel tombstone even when the response
+// hasn't arrived yet — prevents a match if the response gossip arrives later out of order.
+func (s *inMemoryStore) cancelResponse(req CancelResponseRequest, requireExists bool) error {
+	rk := responseKey{poolID: req.PoolID, intentID: req.IntentID, responseID: req.ResponseID}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	rec, exists := s.responses[rk]
+	if !exists {
+		if requireExists {
+			return fmt.Errorf("response not found: %s/%s/%s", req.PoolID, req.IntentID, req.ResponseID)
+		}
+		// Gossip path: write tombstone preemptively.
+		s.cancelledResponses[rk] = req.Canceller
+		return nil
+	}
+	if !identitiesEqual(rec.sender, req.Canceller) {
+		return fmt.Errorf("canceller %s is not the response responder", req.Canceller)
+	}
+	s.cancelledResponses[rk] = req.Canceller
+	return nil
+}
+
+// isIntentCancelled reports whether an intent has been cancelled off-chain.
+func (s *inMemoryStore) isIntentCancelled(poolID, intentID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.cancelledIntents[intentKey{poolID: poolID, intentID: intentID}]
+	return ok
+}
+
+// isResponseCancelled reports whether a response has been cancelled off-chain.
+func (s *inMemoryStore) isResponseCancelled(poolID, intentID, responseID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.cancelledResponses[responseKey{poolID: poolID, intentID: intentID, responseID: responseID}]
+	return ok
 }

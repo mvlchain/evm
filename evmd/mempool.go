@@ -16,14 +16,22 @@ import (
 
 // configureEVMMempool sets up the EVM mempool and related handlers using viper configuration.
 func (app *EVMD) configureEVMMempool(appOpts servertypes.AppOptions, logger log.Logger) error {
+	matchboardABCIEnabled := server.GetMatchboardProposerABCIEnable(appOpts, logger)
+
 	if evmtypes.GetChainConfig() == nil {
 		logger.Debug("evm chain config is not set, skipping mempool configuration")
+		if matchboardABCIEnabled {
+			app.configureMatchboardABCIHandlers(nil, logger)
+		}
 		return nil
 	}
 
 	cosmosPoolMaxTx := server.GetCosmosPoolMaxTx(appOpts, logger)
 	if cosmosPoolMaxTx < 0 {
 		logger.Debug("app-side mempool is disabled, skipping evm mempool configuration")
+		if matchboardABCIEnabled {
+			app.configureMatchboardABCIHandlers(nil, logger)
+		}
 		return nil
 	}
 
@@ -55,11 +63,11 @@ func (app *EVMD) configureEVMMempool(appOpts servertypes.AppOptions, logger log.
 	prepareHandler := abciProposalHandler.PrepareProposalHandler()
 	processHandler := abciProposalHandler.ProcessProposalHandler()
 
-	app.matchProposerABCIEnabled = server.GetMatchboardProposerABCIEnable(appOpts, logger)
-	if app.matchProposerABCIEnabled {
+	if matchboardABCIEnabled {
 		matchHandler := newMatchProposalHandler(prepareHandler, processHandler, logger, defaultInjectedMatchOpsLimit)
 		app.SetPrepareProposal(matchHandler.PrepareProposalHandler())
 		app.SetProcessProposal(matchHandler.ProcessProposalHandler())
+		app.matchProposerABCIEnabled = true
 		logger.Info("enabled matchboard proposer abci injection handlers")
 	} else {
 		app.SetPrepareProposal(prepareHandler)
@@ -67,6 +75,22 @@ func (app *EVMD) configureEVMMempool(appOpts servertypes.AppOptions, logger log.
 	}
 
 	return nil
+}
+
+// configureMatchboardABCIHandlers sets up matchboard injection handlers wrapping the default proposal handlers.
+// Used when the EVM mempool is disabled but matchboard ABCI injection is still required.
+func (app *EVMD) configureMatchboardABCIHandlers(mempl sdkmempool.Mempool, logger log.Logger) {
+	if mempl == nil {
+		mempl = sdkmempool.NoOpMempool{}
+	}
+	defaultHandler := baseapp.NewDefaultProposalHandler(mempl, app)
+	prepareHandler := defaultHandler.PrepareProposalHandler()
+	processHandler := defaultHandler.ProcessProposalHandler()
+	matchHandler := newMatchProposalHandler(prepareHandler, processHandler, logger, defaultInjectedMatchOpsLimit)
+	app.SetPrepareProposal(matchHandler.PrepareProposalHandler())
+	app.SetProcessProposal(matchHandler.ProcessProposalHandler())
+	app.matchProposerABCIEnabled = true
+	logger.Info("enabled matchboard proposer abci injection handlers (no-op mempool)")
 }
 
 // createMempoolConfig creates a new EVMMempoolConfig with the default configuration

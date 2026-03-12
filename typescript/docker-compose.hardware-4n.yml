@@ -1,0 +1,91 @@
+services:
+  evmd-hw0:
+    container_name: evmdhw0
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    build:
+      context: ..
+      dockerfile: typescript/Dockerfile.evmd-local
+    environment:
+      MATCHBOARD_TOKEN_MAP: token-alice=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101,token-bob=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17
+      MATCHBOARD_RATE_LIMIT_REQUESTS: "100000"
+      MATCHBOARD_RATE_LIMIT_WINDOW: "1m"
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init hw0 --chain-id hwbench-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+      ]
+    ports:
+      - "28080:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  evmd-hw1:
+    container_name: evmdhw1
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    environment:
+      MATCHBOARD_TOKEN_MAP: token-alice=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101,token-bob=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17
+      MATCHBOARD_RATE_LIMIT_REQUESTS: "100000"
+      MATCHBOARD_RATE_LIMIT_WINDOW: "1m"
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init hw1 --chain-id hwbench-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+      ]
+    ports:
+      - "28081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  evmd-hw2:
+    container_name: evmdhw2
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    environment:
+      MATCHBOARD_TOKEN_MAP: token-alice=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101,token-bob=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17
+      MATCHBOARD_RATE_LIMIT_REQUESTS: "100000"
+      MATCHBOARD_RATE_LIMIT_WINDOW: "1m"
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init hw2 --chain-id hwbench-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+      ]
+    ports:
+      - "28082:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+
+  evmd-hw3:
+    container_name: evmdhw3
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    environment:
+      MATCHBOARD_TOKEN_MAP: token-alice=0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101,token-bob=0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17
+      MATCHBOARD_RATE_LIMIT_REQUESTS: "100000"
+      MATCHBOARD_RATE_LIMIT_WINDOW: "1m"
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; HOME_DIR=/tmp/evmd-home; if [ ! -f \"$$HOME_DIR/config/genesis.json\" ]; then evmd init hw3 --chain-id hwbench-1 --home \"$$HOME_DIR\" >/dev/null; fi; exec evmd start --home \"$$HOME_DIR\" --grpc-only --grpc.enable=true --grpc.address=0.0.0.0:9090 --grpc-web.enable=false --json-rpc.enable=false --api.enable=false --matchboard.enable=true --matchboard.address=0.0.0.0:8080",
+      ]
+    ports:
+      - "28083:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/healthz >/dev/null 2>&1 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s

@@ -4,6 +4,16 @@ package match.v1;
 
 option go_package = "github.com/cosmos/evm/x/match/types";
 
+// ResponseType distinguishes exact acceptance from counter-offers.
+enum ResponseType {
+  // RESPONSE_TYPE_UNSPECIFIED is invalid and must not be used.
+  RESPONSE_TYPE_UNSPECIFIED = 0;
+  // RESPONSE_TYPE_ACCEPT means the responder accepts the initiator's exact terms.
+  RESPONSE_TYPE_ACCEPT = 1;
+  // RESPONSE_TYPE_COUNTER_OFFER means the responder proposes modified terms.
+  RESPONSE_TYPE_COUNTER_OFFER = 2;
+}
+
 // DigestAlgorithm defines supported hash algorithms for commitment fields.
 enum DigestAlgorithm {
   // DIGEST_ALGORITHM_UNSPECIFIED is invalid and must not be used.
@@ -210,6 +220,9 @@ message ResponsePayload {
   string recipient = 15;
   bytes replay_guard = 16;
   DigestAlgorithm digest_algorithm = 17;
+  // response_type distinguishes exact acceptance (ACCEPT) from a counter-offer (COUNTER_OFFER).
+  // Must be explicitly set; UNSPECIFIED is rejected by the keeper.
+  ResponseType response_type = 18;
 }
 
 // ResponseSignDoc is the domain-separated sign-doc for response.
@@ -297,6 +310,9 @@ message MatchCertificate {
   SignedFinalize finalize = 4;
   Signature board_signature = 5;
   bytes sign_bytes_hash = 6;
+  // settlement carries the plaintext swap parameters for on-chain execution.
+  // The keeper verifies sha256(proto.Marshal(settlement)) == finalize.payload.settlement_hash.
+  SettlementInstruction settlement = 7;
 }
 
 // BoardRecord is metadata used by inbox and outbox listings.
@@ -311,4 +327,17 @@ message BoardRecord {
   string recipient = 8;
   int64 created_unix = 9;
   bytes context_hash = 10;
+}
+
+// SettlementInstruction encodes the atomic swap parameters for on-chain execution.
+// The initiator sends asset_in to the responder; the responder sends asset_out back.
+// Asset values are ERC-20 contract addresses (hex) or the sentinel "native" for the chain coin.
+// Amount values are uint256-range decimal strings.
+message SettlementInstruction {
+  string initiator  = 1;
+  string responder  = 2;
+  string asset_in   = 3;
+  string amount_in  = 4;
+  string asset_out  = 5;
+  string amount_out = 6;
 }

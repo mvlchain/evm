@@ -17,6 +17,7 @@ const (
 const (
 	prefixReplayIndex = iota + 1
 	prefixReplayParties
+	prefixCancelledIntent
 )
 
 var (
@@ -24,6 +25,8 @@ var (
 	KeyPrefixReplayIndex = []byte{prefixReplayIndex}
 	// KeyPrefixReplayParties stores replay participant metadata keyed by (pool_id, intent_id).
 	KeyPrefixReplayParties = []byte{prefixReplayParties}
+	// KeyPrefixCancelledIntent stores on-chain cancellation records keyed by (pool_id, intent_id).
+	KeyPrefixCancelledIntent = []byte{prefixCancelledIntent}
 )
 
 // ReplayKeyString renders the canonical replay key for logs/events.
@@ -133,4 +136,9 @@ func ParseReplayPartiesValue(value []byte) (requester, responder string, err err
 	}
 	responder = string(value[offset : offset+responderLen])
 	return requester, responder, nil
+}
+
+// CancelledIntentStoreKey encodes (pool_id, intent_id) for the cancellation index.
+func CancelledIntentStoreKey(poolID, intentID string) []byte {
+	return replayCompositeStoreKey(KeyPrefixCancelledIntent, poolID, intentID)
 }

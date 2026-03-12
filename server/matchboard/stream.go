@@ -101,7 +101,7 @@ func matchesIntentStreamFilter(filter intentStreamFilter, event intentStreamEven
 	return true
 }
 
-func (h *handler) handleStreamIntents(w http.ResponseWriter, r *http.Request, principal string) {
+func (h *handler) handleStreamIntents(w http.ResponseWriter, r *http.Request) {
 	if !h.requireMethod(w, r, http.MethodGet) {
 		return
 	}
@@ -110,7 +110,7 @@ func (h *handler) handleStreamIntents(w http.ResponseWriter, r *http.Request, pr
 		return
 	}
 
-	filter, err := parseIntentStreamFilter(r, principal)
+	filter, err := parseIntentStreamFilter(r)
 	if err != nil {
 		h.handleValidationFailure(w, err)
 		return
@@ -162,7 +162,7 @@ func (h *handler) handleStreamIntents(w http.ResponseWriter, r *http.Request, pr
 	}
 }
 
-func parseIntentStreamFilter(r *http.Request, principal string) (intentStreamFilter, error) {
+func parseIntentStreamFilter(r *http.Request) (intentStreamFilter, error) {
 	query := r.URL.Query()
 	filter := intentStreamFilter{
 		intentType: strings.ToLower(strings.TrimSpace(query.Get("intent_type"))),
@@ -175,16 +175,6 @@ func parseIntentStreamFilter(r *http.Request, principal string) (intentStreamFil
 	case "", IntentTypeRequest, IntentTypeAccept, IntentTypeFinalize:
 	default:
 		return intentStreamFilter{}, &validationError{code: errorCodeInvalidRequest, field: "intent_type", message: "intent_type must be request, accept, or finalize"}
-	}
-
-	if filter.requester == "" && filter.responder == "" {
-		filter.responder = principal
-	}
-	if filter.requester != "" && !identitiesEqual(filter.requester, principal) {
-		return intentStreamFilter{}, &validationError{code: errorCodeForbidden, field: "requester", message: "requester must match authenticated principal"}
-	}
-	if filter.responder != "" && !identitiesEqual(filter.responder, principal) {
-		return intentStreamFilter{}, &validationError{code: errorCodeForbidden, field: "responder", message: "responder must match authenticated principal"}
 	}
 
 	return filter, nil

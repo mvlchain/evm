@@ -13,13 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const (
-	testTokenAlice     = "token-alice"
-	testTokenBob       = "token-bob"
-	testPrincipalAlice = "alice"
-	testPrincipalBob   = "bob"
-)
-
 type testClock struct {
 	now time.Time
 }
@@ -37,12 +30,11 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 
 	fixedNow := time.Unix(1_710_000_000, 0).UTC()
 	h := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
 		NowFn: func() time.Time { return fixedNow },
 	})
+
+	alice := mustNewEthereumIdentity()
+	bob := mustNewEthereumIdentity()
 
 	intentSignHash := testHash("1")
 	responseSignHash := testHash("2")
@@ -54,19 +46,19 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 	intentReq := PublishIntentRequest{
 		PoolID:          "pool-1",
 		IntentID:        "intent-1",
-		Sender:          testPrincipalAlice,
-		Recipient:       testPrincipalBob,
+		Sender:          alice.address,
+		Recipient:       bob.address,
 		ExpiresUnix:     fixedNow.Unix() + 600,
 		DigestAlgorithm: DigestAlgorithmSHA256,
 		IntentSignHash:  intentSignHash,
 		ContextHash:     intentContextHash,
 		Signature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
+			Signer:    alice.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-intent",
+			Signature: mustSignHashHex(alice.priv, intentSignHash),
 		},
 	}
-	intentResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", testTokenAlice, intentReq)
+	intentResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", intentReq)
 	require.Equal(t, http.StatusCreated, intentResp.StatusCode)
 	intentCreated := decodeJSONResponse[publishIntentResponse](t, intentResp)
 	require.Equal(t, intentReq.PoolID, intentCreated.PoolID)
@@ -78,20 +70,21 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 		PoolID:           "pool-1",
 		IntentID:         "intent-1",
 		ResponseID:       "response-1",
-		Sender:           testPrincipalBob,
-		Recipient:        testPrincipalAlice,
+		Sender:           bob.address,
+		Recipient:        alice.address,
 		ExpiresUnix:      fixedNow.Unix() + 600,
 		DigestAlgorithm:  DigestAlgorithmSHA256,
+		ResponseType:     "ACCEPT",
 		IntentSignHash:   intentSignHash,
 		ResponseSignHash: responseSignHash,
 		ContextHash:      responseContextHash,
 		Signature: SignatureMetadata{
-			Signer:    testPrincipalBob,
-			Algorithm: SignatureAlgorithmEd25519,
-			Signature: "sig-response",
+			Signer:    bob.address,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: mustSignHashHex(bob.priv, responseSignHash),
 		},
 	}
-	responseResp := doJSONRequest(t, h, http.MethodPost, "/v1/responses", testTokenBob, responseReq)
+	responseResp := doJSONRequest(t, h, http.MethodPost, "/v1/responses", responseReq)
 	require.Equal(t, http.StatusCreated, responseResp.StatusCode)
 	responseCreated := decodeJSONResponse[publishResponseResponse](t, responseResp)
 	require.Equal(t, responseReq.PoolID, responseCreated.PoolID)
@@ -105,8 +98,8 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 		IntentID:         "intent-1",
 		ResponseID:       "response-1",
 		FinalizeID:       "finalize-1",
-		Sender:           testPrincipalAlice,
-		Recipient:        testPrincipalBob,
+		Sender:           alice.address,
+		Recipient:        bob.address,
 		ExpiresUnix:      fixedNow.Unix() + 600,
 		DigestAlgorithm:  DigestAlgorithmSHA256,
 		IntentSignHash:   intentSignHash,
@@ -114,17 +107,17 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 		FinalizeSignHash: finalizeSignHash,
 		ContextHash:      finalizeContextHash,
 		InitiatorSignature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
+			Signer:    alice.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-finalize-initiator",
+			Signature: mustSignHashHex(alice.priv, finalizeSignHash),
 		},
 		ResponderSignature: SignatureMetadata{
-			Signer:    testPrincipalBob,
+			Signer:    bob.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-finalize-responder",
+			Signature: mustSignHashHex(bob.priv, finalizeSignHash),
 		},
 	}
-	finalizeResp := doJSONRequest(t, h, http.MethodPost, "/v1/finalize", testTokenAlice, finalizeReq)
+	finalizeResp := doJSONRequest(t, h, http.MethodPost, "/v1/finalize", finalizeReq)
 	require.Equal(t, http.StatusCreated, finalizeResp.StatusCode)
 	finalizeCreated := decodeJSONResponse[publishFinalizeResponse](t, finalizeResp)
 	require.Equal(t, finalizeReq.PoolID, finalizeCreated.PoolID)
@@ -134,10 +127,10 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 	require.Equal(t, finalizeSignHash, finalizeCreated.FinalizeSignHash)
 	require.Equal(t, fixedNow.Unix(), finalizeCreated.StoredUnix)
 
-	aliceInboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenAlice, nil)
+	aliceInboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox?recipient="+alice.address, nil)
 	require.Equal(t, http.StatusOK, aliceInboxResp.StatusCode)
 	aliceInbox := decodeJSONResponse[listRecordsResponse](t, aliceInboxResp)
-	require.Equal(t, testPrincipalAlice, aliceInbox.Principal)
+	require.Equal(t, alice.address, aliceInbox.Principal)
 	require.Len(t, aliceInbox.Records, 1)
 	require.EqualValues(t, 1, aliceInbox.Total)
 	require.Equal(t, RecordTypeResponse, aliceInbox.Records[0].RecordType)
@@ -145,10 +138,10 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 	require.Equal(t, intentSignHash, aliceInbox.Records[0].IntentSignHash)
 	require.Equal(t, responseSignHash, aliceInbox.Records[0].ResponseSignHash)
 
-	aliceOutboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/outbox", testTokenAlice, nil)
+	aliceOutboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/outbox?sender="+alice.address, nil)
 	require.Equal(t, http.StatusOK, aliceOutboxResp.StatusCode)
 	aliceOutbox := decodeJSONResponse[listRecordsResponse](t, aliceOutboxResp)
-	require.Equal(t, testPrincipalAlice, aliceOutbox.Principal)
+	require.Equal(t, alice.address, aliceOutbox.Principal)
 	require.Len(t, aliceOutbox.Records, 2)
 	require.EqualValues(t, 2, aliceOutbox.Total)
 	require.Equal(t, RecordTypeIntent, aliceOutbox.Records[0].RecordType)
@@ -158,68 +151,23 @@ func TestMatchboardE2EHappyPath(t *testing.T) {
 	require.Equal(t, finalizeContextHash, aliceOutbox.Records[1].ContextHash)
 	require.Equal(t, finalizeSignHash, aliceOutbox.Records[1].FinalizeSignHash)
 
-	bobInboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenBob, nil)
+	bobInboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox?recipient="+bob.address, nil)
 	require.Equal(t, http.StatusOK, bobInboxResp.StatusCode)
 	bobInbox := decodeJSONResponse[listRecordsResponse](t, bobInboxResp)
-	require.Equal(t, testPrincipalBob, bobInbox.Principal)
+	require.Equal(t, bob.address, bobInbox.Principal)
 	require.Len(t, bobInbox.Records, 2)
 	require.EqualValues(t, 2, bobInbox.Total)
 	require.Equal(t, RecordTypeIntent, bobInbox.Records[0].RecordType)
 	require.Equal(t, RecordTypeFinalize, bobInbox.Records[1].RecordType)
 
-	bobOutboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/outbox", testTokenBob, nil)
+	bobOutboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/outbox?sender="+bob.address, nil)
 	require.Equal(t, http.StatusOK, bobOutboxResp.StatusCode)
 	bobOutbox := decodeJSONResponse[listRecordsResponse](t, bobOutboxResp)
-	require.Equal(t, testPrincipalBob, bobOutbox.Principal)
+	require.Equal(t, bob.address, bobOutbox.Principal)
 	require.Len(t, bobOutbox.Records, 1)
 	require.EqualValues(t, 1, bobOutbox.Total)
 	require.Equal(t, RecordTypeResponse, bobOutbox.Records[0].RecordType)
 	require.Equal(t, responseContextHash, bobOutbox.Records[0].ContextHash)
-}
-
-func TestMatchboardE2EAuthFailures(t *testing.T) {
-	t.Parallel()
-
-	fixedNow := time.Unix(1_710_000_300, 0).UTC()
-	h := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
-		NowFn: func() time.Time { return fixedNow },
-	})
-
-	intentReq := PublishIntentRequest{
-		PoolID:          "pool-auth",
-		IntentID:        "intent-auth",
-		Sender:          testPrincipalAlice,
-		Recipient:       testPrincipalBob,
-		ExpiresUnix:     fixedNow.Unix() + 600,
-		DigestAlgorithm: DigestAlgorithmSHA256,
-		IntentSignHash:  testHash("4"),
-		ContextHash:     testHash("d"),
-		Signature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
-			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-auth",
-		},
-	}
-
-	missingAuthResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", "", intentReq)
-	require.Equal(t, http.StatusUnauthorized, missingAuthResp.StatusCode)
-	missingAuthErr := decodeJSONResponse[errorEnvelope](t, missingAuthResp)
-	require.Equal(t, errorCodeUnauthorized, missingAuthErr.Error.Code)
-
-	unknownTokenResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", "unknown-token", nil)
-	require.Equal(t, http.StatusUnauthorized, unknownTokenResp.StatusCode)
-	unknownTokenErr := decodeJSONResponse[errorEnvelope](t, unknownTokenResp)
-	require.Equal(t, errorCodeUnauthorized, unknownTokenErr.Error.Code)
-
-	forbiddenInboxResp := doJSONRequest(t, h, http.MethodGet, "/v1/inbox?recipient="+testPrincipalBob, testTokenAlice, nil)
-	require.Equal(t, http.StatusForbidden, forbiddenInboxResp.StatusCode)
-	forbiddenInboxErr := decodeJSONResponse[errorEnvelope](t, forbiddenInboxResp)
-	require.Equal(t, errorCodeForbidden, forbiddenInboxErr.Error.Code)
-	require.Equal(t, "recipient", forbiddenInboxErr.Error.Field)
 }
 
 func TestMatchboardE2ERateLimit(t *testing.T) {
@@ -227,36 +175,71 @@ func TestMatchboardE2ERateLimit(t *testing.T) {
 
 	clock := &testClock{now: time.Unix(1_710_000_600, 0).UTC()}
 	h := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
 		NowFn:             clock.Now,
 		RateLimitRequests: 2,
 		RateLimitWindow:   time.Minute,
 	})
 
-	first := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenAlice, nil)
-	require.Equal(t, http.StatusOK, first.StatusCode)
+	alice := mustNewEthereumIdentity()
+	bob := mustNewEthereumIdentity()
+
+	makeIntent := func(id, hash string) PublishIntentRequest {
+		h := testHash(hash)
+		return PublishIntentRequest{
+			PoolID:          "pool-rl",
+			IntentID:        id,
+			Sender:          alice.address,
+			Recipient:       bob.address,
+			ExpiresUnix:     clock.now.Unix() + 600,
+			DigestAlgorithm: DigestAlgorithmSHA256,
+			IntentSignHash:  h,
+			ContextHash:     h,
+			Signature: SignatureMetadata{
+				Signer:    alice.address,
+				Algorithm: SignatureAlgorithmSecp256k1,
+				Signature: mustSignHashHex(alice.priv, h),
+			},
+		}
+	}
+
+	first := doJSONRequest(t, h, http.MethodPost, "/v1/intents", makeIntent("rl-1", "1"))
+	require.Equal(t, http.StatusCreated, first.StatusCode)
 	require.NoError(t, first.Body.Close())
 
-	second := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenAlice, nil)
-	require.Equal(t, http.StatusOK, second.StatusCode)
+	second := doJSONRequest(t, h, http.MethodPost, "/v1/intents", makeIntent("rl-2", "2"))
+	require.Equal(t, http.StatusCreated, second.StatusCode)
 	require.NoError(t, second.Body.Close())
 
-	third := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenAlice, nil)
+	third := doJSONRequest(t, h, http.MethodPost, "/v1/intents", makeIntent("rl-3", "3"))
 	require.Equal(t, http.StatusTooManyRequests, third.StatusCode)
 	thirdErr := decodeJSONResponse[errorEnvelope](t, third)
 	require.Equal(t, errorCodeRateLimited, thirdErr.Error.Code)
 	require.True(t, thirdErr.Error.Retryable)
 
-	bobRequest := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenBob, nil)
-	require.Equal(t, http.StatusOK, bobRequest.StatusCode)
-	require.NoError(t, bobRequest.Body.Close())
+	// bob has a separate rate limit bucket
+	bh := testHash("b")
+	bobIntent := PublishIntentRequest{
+		PoolID:          "pool-rl",
+		IntentID:        "rl-bob-1",
+		Sender:          bob.address,
+		Recipient:       alice.address,
+		ExpiresUnix:     clock.now.Unix() + 600,
+		DigestAlgorithm: DigestAlgorithmSHA256,
+		IntentSignHash:  bh,
+		ContextHash:     bh,
+		Signature: SignatureMetadata{
+			Signer:    bob.address,
+			Algorithm: SignatureAlgorithmSecp256k1,
+			Signature: mustSignHashHex(bob.priv, bh),
+		},
+	}
+	bobReq := doJSONRequest(t, h, http.MethodPost, "/v1/intents", bobIntent)
+	require.Equal(t, http.StatusCreated, bobReq.StatusCode)
+	require.NoError(t, bobReq.Body.Close())
 
 	clock.Advance(time.Minute + time.Second)
-	afterWindow := doJSONRequest(t, h, http.MethodGet, "/v1/inbox", testTokenAlice, nil)
-	require.Equal(t, http.StatusOK, afterWindow.StatusCode)
+	afterWindow := doJSONRequest(t, h, http.MethodPost, "/v1/intents", makeIntent("rl-4", "4"))
+	require.Equal(t, http.StatusCreated, afterWindow.StatusCode)
 	require.NoError(t, afterWindow.Body.Close())
 }
 
@@ -265,29 +248,32 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 
 	fixedNow := time.Unix(1_710_000_900, 0).UTC()
 	h := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
 		NowFn: func() time.Time { return fixedNow },
 	})
+
+	alice := mustNewEthereumIdentity()
+	bob := mustNewEthereumIdentity()
+
+	intentHash := testHash("9")
+	responseHash := testHash("7")
+	finalizeHash := testHash("5")
 
 	intentReq := PublishIntentRequest{
 		PoolID:          "pool-proposer",
 		IntentID:        "intent-proposer",
-		Sender:          testPrincipalAlice,
-		Recipient:       testPrincipalBob,
+		Sender:          alice.address,
+		Recipient:       bob.address,
 		ExpiresUnix:     fixedNow.Unix() + 600,
 		DigestAlgorithm: DigestAlgorithmSHA256,
-		IntentSignHash:  testHash("9"),
+		IntentSignHash:  intentHash,
 		ContextHash:     testHash("8"),
 		Signature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
+			Signer:    alice.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-intent-proposer",
+			Signature: mustSignHashHex(alice.priv, intentHash),
 		},
 	}
-	intentResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", testTokenAlice, intentReq)
+	intentResp := doJSONRequest(t, h, http.MethodPost, "/v1/intents", intentReq)
 	require.Equal(t, http.StatusCreated, intentResp.StatusCode)
 	require.NoError(t, intentResp.Body.Close())
 
@@ -295,20 +281,21 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 		PoolID:           intentReq.PoolID,
 		IntentID:         intentReq.IntentID,
 		ResponseID:       "response-proposer",
-		Sender:           testPrincipalBob,
-		Recipient:        testPrincipalAlice,
+		Sender:           bob.address,
+		Recipient:        alice.address,
 		ExpiresUnix:      fixedNow.Unix() + 600,
 		DigestAlgorithm:  DigestAlgorithmSHA256,
+		ResponseType:     "ACCEPT",
 		IntentSignHash:   intentReq.IntentSignHash,
-		ResponseSignHash: testHash("7"),
+		ResponseSignHash: responseHash,
 		ContextHash:      testHash("6"),
 		Signature: SignatureMetadata{
-			Signer:    testPrincipalBob,
+			Signer:    bob.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-response-proposer",
+			Signature: mustSignHashHex(bob.priv, responseHash),
 		},
 	}
-	responseResp := doJSONRequest(t, h, http.MethodPost, "/v1/responses", testTokenBob, responseReq)
+	responseResp := doJSONRequest(t, h, http.MethodPost, "/v1/responses", responseReq)
 	require.Equal(t, http.StatusCreated, responseResp.StatusCode)
 	require.NoError(t, responseResp.Body.Close())
 
@@ -317,33 +304,32 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 		IntentID:         intentReq.IntentID,
 		ResponseID:       responseReq.ResponseID,
 		FinalizeID:       "finalize-proposer",
-		Sender:           testPrincipalAlice,
-		Recipient:        testPrincipalBob,
+		Sender:           alice.address,
+		Recipient:        bob.address,
 		ExpiresUnix:      fixedNow.Unix() + 600,
 		DigestAlgorithm:  DigestAlgorithmSHA256,
 		IntentSignHash:   intentReq.IntentSignHash,
 		ResponseSignHash: responseReq.ResponseSignHash,
-		FinalizeSignHash: testHash("5"),
+		FinalizeSignHash: finalizeHash,
 		ContextHash:      testHash("4"),
 		InitiatorSignature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
+			Signer:    alice.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-finalize-initiator-proposer",
+			Signature: mustSignHashHex(alice.priv, finalizeHash),
 		},
 		ResponderSignature: SignatureMetadata{
-			Signer:    testPrincipalBob,
+			Signer:    bob.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-finalize-responder-proposer",
+			Signature: mustSignHashHex(bob.priv, finalizeHash),
 		},
 	}
-	finalizeResp := doJSONRequest(t, h, http.MethodPost, "/v1/finalize", testTokenAlice, finalizeReq)
+	finalizeResp := doJSONRequest(t, h, http.MethodPost, "/v1/finalize", finalizeReq)
 	require.Equal(t, http.StatusCreated, finalizeResp.StatusCode)
 	require.NoError(t, finalizeResp.Body.Close())
 
-	listResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	listResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", nil)
 	require.Equal(t, http.StatusOK, listResp.StatusCode)
 	listed := decodeJSONResponse[listProposedOperationsResponse](t, listResp)
-	require.Equal(t, testPrincipalAlice, listed.Proposer)
 	require.Len(t, listed.Operations, 3)
 	require.EqualValues(t, 3, listed.TotalPending)
 	require.NotEmpty(t, listed.CanonicalBatchHash)
@@ -362,7 +348,6 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 		h,
 		http.MethodPost,
 		"/v1/proposer/operations/commit",
-		testTokenAlice,
 		commitProposedOperationsRequest{
 			OperationIDs: []string{opIDs[0], strings.Repeat("f", 64)},
 		},
@@ -371,7 +356,7 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 	rollbackErr := decodeJSONResponse[errorEnvelope](t, rollbackResp)
 	require.Equal(t, errorCodeStateConflict, rollbackErr.Error.Code)
 
-	listAfterRollbackResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	listAfterRollbackResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", nil)
 	require.Equal(t, http.StatusOK, listAfterRollbackResp.StatusCode)
 	listAfterRollback := decodeJSONResponse[listProposedOperationsResponse](t, listAfterRollbackResp)
 	require.Len(t, listAfterRollback.Operations, 3)
@@ -383,17 +368,15 @@ func TestMatchboardProposerOperationsCanonicalAndAtomicCommit(t *testing.T) {
 		h,
 		http.MethodPost,
 		"/v1/proposer/operations/commit",
-		testTokenAlice,
 		commitProposedOperationsRequest{OperationIDs: opIDs},
 	)
 	require.Equal(t, http.StatusOK, commitResp.StatusCode)
 	commitResult := decodeJSONResponse[commitProposedOperationsResponse](t, commitResp)
-	require.Equal(t, testPrincipalAlice, commitResult.Proposer)
 	require.Equal(t, len(opIDs), commitResult.Committed)
 	require.EqualValues(t, 0, commitResult.Remaining)
 	require.Empty(t, commitResult.CanonicalBatchHash)
 
-	emptyResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", testTokenAlice, nil)
+	emptyResp := doJSONRequest(t, h, http.MethodGet, "/v1/proposer/operations?limit=10", nil)
 	require.Equal(t, http.StatusOK, emptyResp.StatusCode)
 	emptyListed := decodeJSONResponse[listProposedOperationsResponse](t, emptyResp)
 	require.EqualValues(t, 0, emptyListed.TotalPending)
@@ -408,10 +391,6 @@ func TestMatchboardSignedPayloadGossipReplication(t *testing.T) {
 	const gossipSecret = "gossip-secret"
 
 	nodeB := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
 		NowFn:              func() time.Time { return fixedNow },
 		GossipSharedSecret: gossipSecret,
 		GossipNodeID:       "node-b",
@@ -420,39 +399,39 @@ func TestMatchboardSignedPayloadGossipReplication(t *testing.T) {
 	defer nodeBServer.Close()
 
 	nodeA := newMatchboardTestHandler(t, Config{
-		TokenPrincipalMap: map[string]string{
-			testTokenAlice: testPrincipalAlice,
-			testTokenBob:   testPrincipalBob,
-		},
 		NowFn:              func() time.Time { return fixedNow },
 		GossipPeers:        []string{nodeBServer.URL},
 		GossipSharedSecret: gossipSecret,
 		GossipNodeID:       "node-a",
 	})
 
+	alice := mustNewEthereumIdentity()
+	bob := mustNewEthereumIdentity()
+
+	intentHash := testHash("a")
 	intentReq := PublishIntentRequest{
 		PoolID:          "pool-gossip",
 		IntentID:        "intent-gossip",
-		Sender:          testPrincipalAlice,
-		Recipient:       testPrincipalBob,
+		Sender:          alice.address,
+		Recipient:       bob.address,
 		ExpiresUnix:     fixedNow.Unix() + 600,
 		DigestAlgorithm: DigestAlgorithmSHA256,
-		IntentSignHash:  testHash("a"),
+		IntentSignHash:  intentHash,
 		ContextHash:     testHash("b"),
 		Signature: SignatureMetadata{
-			Signer:    testPrincipalAlice,
+			Signer:    alice.address,
 			Algorithm: SignatureAlgorithmSecp256k1,
-			Signature: "sig-gossip-intent",
+			Signature: mustSignHashHex(alice.priv, intentHash),
 		},
 	}
-	publishResp := doJSONRequest(t, nodeA, http.MethodPost, "/v1/intents", testTokenAlice, intentReq)
+	publishResp := doJSONRequest(t, nodeA, http.MethodPost, "/v1/intents", intentReq)
 	require.Equal(t, http.StatusCreated, publishResp.StatusCode)
 	require.NoError(t, publishResp.Body.Close())
 
-	bobInboxResp := doJSONRequest(t, nodeB, http.MethodGet, "/v1/inbox", testTokenBob, nil)
+	bobInboxResp := doJSONRequest(t, nodeB, http.MethodGet, "/v1/inbox?recipient="+bob.address, nil)
 	require.Equal(t, http.StatusOK, bobInboxResp.StatusCode)
 	bobInbox := decodeJSONResponse[listRecordsResponse](t, bobInboxResp)
-	require.Equal(t, testPrincipalBob, bobInbox.Principal)
+	require.Equal(t, bob.address, bobInbox.Principal)
 	require.Len(t, bobInbox.Records, 1)
 	require.Equal(t, RecordTypeIntent, bobInbox.Records[0].RecordType)
 	require.Equal(t, intentReq.PoolID, bobInbox.Records[0].PoolID)
@@ -468,7 +447,7 @@ func newMatchboardTestHandler(t *testing.T, cfg Config) http.Handler {
 	return h
 }
 
-func doJSONRequest(t *testing.T, h http.Handler, method, path, token string, body any) *http.Response {
+func doJSONRequest(t *testing.T, h http.Handler, method, path string, body any) *http.Response {
 	t.Helper()
 
 	var bodyReader io.Reader
@@ -481,9 +460,6 @@ func doJSONRequest(t *testing.T, h http.Handler, method, path, token string, bod
 	req := httptest.NewRequest(method, path, bodyReader)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
 	}
 
 	recorder := httptest.NewRecorder()
@@ -508,4 +484,8 @@ func decodeJSONResponse[T any](t *testing.T, resp *http.Response) T {
 
 func testHash(c string) string {
 	return strings.Repeat(c, 64)
+}
+
+func nowFn(t time.Time) func() time.Time {
+	return func() time.Time { return t }
 }

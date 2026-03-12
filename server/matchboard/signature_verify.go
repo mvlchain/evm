@@ -9,17 +9,12 @@ import (
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
-func validateEthereumSignatureIfRequired(field, signHashHex, expectedSigner string, sig SignatureMetadata) error {
-	// Legacy mode: non-address principals are accepted without cryptographic verification.
-	if !common.IsHexAddress(expectedSigner) {
-		return nil
-	}
-
+func validateEthereumSignature(field, signHashHex, expectedSigner string, sig SignatureMetadata) error {
 	if !strings.EqualFold(strings.TrimSpace(sig.Algorithm), SignatureAlgorithmSecp256k1) {
 		return &validationError{
 			code:    errorCodeInvalidSignature,
 			field:   field + ".algorithm",
-			message: "ethereum-address signer requires secp256k1 signature",
+			message: "signer requires secp256k1 signature",
 		}
 	}
 

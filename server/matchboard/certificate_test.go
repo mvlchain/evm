@@ -97,7 +97,7 @@ func TestValidateAndNormalizeFinalizeWithMatchCertificate(t *testing.T) {
 		MatchCertificate: certBytes,
 	}
 
-	err = validateAndNormalizeFinalize(&req, req.Sender, nowUnix)
+	err = validateAndNormalizeFinalize(&req, nowUnix)
 	require.NoError(t, err)
 
 	normalizedCert, marshalErr := matchtypes.DeterministicProtoMarshal(&cert)
@@ -132,6 +132,7 @@ func validMatchCertificateForTest(t *testing.T, nowUnix, expiresUnix int64) matc
 	board := mustNewIdentityForMatchCert(t)
 
 	intentPayload := &matchtypes.IntentPayload{
+		ChainId:         "cosmos-evm-test-1",
 		PoolId:          "pool-1",
 		IntentId:        "intent-1",
 		Initiator:       initiator.address,
@@ -144,6 +145,7 @@ func validMatchCertificateForTest(t *testing.T, nowUnix, expiresUnix int64) matc
 	require.NoError(t, err)
 
 	responsePayload := &matchtypes.ResponsePayload{
+		ChainId:         "cosmos-evm-test-1",
 		PoolId:          "pool-1",
 		IntentId:        "intent-1",
 		IntentSignHash:  intentHash,
@@ -153,11 +155,13 @@ func validMatchCertificateForTest(t *testing.T, nowUnix, expiresUnix int64) matc
 		ExpiresUnix:     expiresUnix,
 		ContextHash:     contextHash,
 		DigestAlgorithm: matchtypes.DigestAlgorithmSHA256,
+		ResponseType:    matchtypes.ResponseType_RESPONSE_TYPE_ACCEPT,
 	}
 	responseHash, err := matchtypes.ResponseSignDocHash(responsePayload)
 	require.NoError(t, err)
 
 	finalizePayload := &matchtypes.FinalizePayload{
+		ChainId:          "cosmos-evm-test-1",
 		PoolId:           "pool-1",
 		IntentId:         "intent-1",
 		ResponseId:       "response-1",
@@ -175,6 +179,7 @@ func validMatchCertificateForTest(t *testing.T, nowUnix, expiresUnix int64) matc
 	require.NoError(t, err)
 
 	certificatePayload := &matchtypes.CertificatePayload{
+		ChainId:          "cosmos-evm-test-1",
 		PoolId:           "pool-1",
 		IntentId:         "intent-1",
 		ResponseId:       "response-1",

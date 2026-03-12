@@ -1,0 +1,83 @@
+services:
+  evm-node0:
+    container_name: evmevm0
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    build:
+      context: ..
+      dockerfile: typescript/Dockerfile.evmd-local
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; exec evmd start --home /data/node0/evmd --chain-id hwbench-evm-1 --rpc.laddr=tcp://0.0.0.0:26657 --grpc.enable=false --api.enable=false --json-rpc.enable=true --json-rpc.address=0.0.0.0:8545 --json-rpc.ws-address=0.0.0.0:8546 --minimum-gas-prices=0atest --evm.mempool.account-slots=4096 --evm.mempool.account-queue=4096 --evm.mempool.global-slots=16384 --evm.mempool.global-queue=32768",
+      ]
+    ports:
+      - "28545:8545"
+      - "28657:26657"
+    volumes:
+      - ../.bench-testnets:/data
+    networks:
+      evm-hw-net:
+        ipv4_address: 192.168.20.2
+
+  evm-node1:
+    container_name: evmevm1
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; exec evmd start --home /data/node1/evmd --chain-id hwbench-evm-1 --rpc.laddr=tcp://0.0.0.0:26657 --grpc.enable=false --api.enable=false --json-rpc.enable=true --json-rpc.address=0.0.0.0:8545 --json-rpc.ws-address=0.0.0.0:8546 --minimum-gas-prices=0atest --evm.mempool.account-slots=4096 --evm.mempool.account-queue=4096 --evm.mempool.global-slots=16384 --evm.mempool.global-queue=32768",
+      ]
+    ports:
+      - "28555:8545"
+      - "28667:26657"
+    volumes:
+      - ../.bench-testnets:/data
+    networks:
+      evm-hw-net:
+        ipv4_address: 192.168.20.3
+
+  evm-node2:
+    container_name: evmevm2
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; exec evmd start --home /data/node2/evmd --chain-id hwbench-evm-1 --rpc.laddr=tcp://0.0.0.0:26657 --grpc.enable=false --api.enable=false --json-rpc.enable=true --json-rpc.address=0.0.0.0:8545 --json-rpc.ws-address=0.0.0.0:8546 --minimum-gas-prices=0atest --evm.mempool.account-slots=4096 --evm.mempool.account-queue=4096 --evm.mempool.global-slots=16384 --evm.mempool.global-queue=32768",
+      ]
+    ports:
+      - "28565:8545"
+      - "28677:26657"
+    volumes:
+      - ../.bench-testnets:/data
+    networks:
+      evm-hw-net:
+        ipv4_address: 192.168.20.4
+
+  evm-node3:
+    container_name: evmevm3
+    image: ${EVMD_GOSSIP_IMAGE:-evmd-gossip:local}
+    command:
+      [
+        "/bin/sh",
+        "-lc",
+        "set -e; exec evmd start --home /data/node3/evmd --chain-id hwbench-evm-1 --rpc.laddr=tcp://0.0.0.0:26657 --grpc.enable=false --api.enable=false --json-rpc.enable=true --json-rpc.address=0.0.0.0:8545 --json-rpc.ws-address=0.0.0.0:8546 --minimum-gas-prices=0atest --evm.mempool.account-slots=4096 --evm.mempool.account-queue=4096 --evm.mempool.global-slots=16384 --evm.mempool.global-queue=32768",
+      ]
+    ports:
+      - "28575:8545"
+      - "28687:26657"
+    volumes:
+      - ../.bench-testnets:/data
+    networks:
+      evm-hw-net:
+        ipv4_address: 192.168.20.5
+
+networks:
+  evm-hw-net:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 192.168.20.0/24

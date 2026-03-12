@@ -50,6 +50,34 @@ func (DigestAlgorithm) EnumDescriptor() ([]byte, []int) {
 	return fileDescriptor_99e02b80867ef82d, []int{0}
 }
 
+// ResponseType distinguishes exact acceptance from counter-offers.
+type ResponseType int32
+
+const (
+	// RESPONSE_TYPE_UNSPECIFIED is invalid and must not be used.
+	ResponseType_RESPONSE_TYPE_UNSPECIFIED ResponseType = 0
+	// RESPONSE_TYPE_ACCEPT means the responder accepts the initiator's exact terms.
+	ResponseType_RESPONSE_TYPE_ACCEPT ResponseType = 1
+	// RESPONSE_TYPE_COUNTER_OFFER means the responder proposes modified terms.
+	ResponseType_RESPONSE_TYPE_COUNTER_OFFER ResponseType = 2
+)
+
+var ResponseType_name = map[int32]string{
+	0: "RESPONSE_TYPE_UNSPECIFIED",
+	1: "RESPONSE_TYPE_ACCEPT",
+	2: "RESPONSE_TYPE_COUNTER_OFFER",
+}
+
+var ResponseType_value = map[string]int32{
+	"RESPONSE_TYPE_UNSPECIFIED":   0,
+	"RESPONSE_TYPE_ACCEPT":        1,
+	"RESPONSE_TYPE_COUNTER_OFFER": 2,
+}
+
+func (x ResponseType) String() string {
+	return proto.EnumName(ResponseType_name, int32(x))
+}
+
 // SignatureAlgorithm defines supported signature algorithms.
 type SignatureAlgorithm int32
 
@@ -965,6 +993,7 @@ type ResponsePayload struct {
 	Recipient       string          `protobuf:"bytes,15,opt,name=recipient,proto3" json:"recipient,omitempty"`
 	ReplayGuard     []byte          `protobuf:"bytes,16,opt,name=replay_guard,json=replayGuard,proto3" json:"replay_guard,omitempty"`
 	DigestAlgorithm DigestAlgorithm `protobuf:"varint,17,opt,name=digest_algorithm,json=digestAlgorithm,proto3,enum=match.v1.DigestAlgorithm" json:"digest_algorithm,omitempty"`
+	ResponseType    ResponseType    `protobuf:"varint,18,opt,name=response_type,json=responseType,proto3,enum=match.v1.ResponseType" json:"response_type,omitempty"`
 }
 
 func (m *ResponsePayload) Reset()         { *m = ResponsePayload{} }
@@ -1117,6 +1146,13 @@ func (m *ResponsePayload) GetDigestAlgorithm() DigestAlgorithm {
 		return m.DigestAlgorithm
 	}
 	return DigestAlgorithm_DIGEST_ALGORITHM_UNSPECIFIED
+}
+
+func (m *ResponsePayload) GetResponseType() ResponseType {
+	if m != nil {
+		return m.ResponseType
+	}
+	return ResponseType_RESPONSE_TYPE_UNSPECIFIED
 }
 
 // ResponseSignDoc is the domain-separated sign-doc for response.
@@ -1772,12 +1808,15 @@ func (m *CertificateSignDoc) GetPayload() *CertificatePayload {
 
 // MatchCertificate is the full proof bundle across all signed stages.
 type MatchCertificate struct {
-	Payload        *CertificatePayload `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
-	Intent         *SignedIntent       `protobuf:"bytes,2,opt,name=intent,proto3" json:"intent,omitempty"`
-	Response       *SignedResponse     `protobuf:"bytes,3,opt,name=response,proto3" json:"response,omitempty"`
-	Finalize       *SignedFinalize     `protobuf:"bytes,4,opt,name=finalize,proto3" json:"finalize,omitempty"`
-	BoardSignature *Signature          `protobuf:"bytes,5,opt,name=board_signature,json=boardSignature,proto3" json:"board_signature,omitempty"`
-	SignBytesHash  []byte              `protobuf:"bytes,6,opt,name=sign_bytes_hash,json=signBytesHash,proto3" json:"sign_bytes_hash,omitempty"`
+	Payload        *CertificatePayload    `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+	Intent         *SignedIntent          `protobuf:"bytes,2,opt,name=intent,proto3" json:"intent,omitempty"`
+	Response       *SignedResponse        `protobuf:"bytes,3,opt,name=response,proto3" json:"response,omitempty"`
+	Finalize       *SignedFinalize        `protobuf:"bytes,4,opt,name=finalize,proto3" json:"finalize,omitempty"`
+	BoardSignature *Signature             `protobuf:"bytes,5,opt,name=board_signature,json=boardSignature,proto3" json:"board_signature,omitempty"`
+	SignBytesHash  []byte                 `protobuf:"bytes,6,opt,name=sign_bytes_hash,json=signBytesHash,proto3" json:"sign_bytes_hash,omitempty"`
+	// Settlement carries the plaintext swap parameters for on-chain execution (field 7).
+	// Keeper verifies sha256(proto.Marshal(Settlement)) == Finalize.Payload.SettlementHash before executing.
+	Settlement *SettlementInstruction `protobuf:"bytes,7,opt,name=settlement,proto3" json:"settlement,omitempty"`
 }
 
 func (m *MatchCertificate) Reset()         { *m = MatchCertificate{} }
@@ -1851,6 +1890,13 @@ func (m *MatchCertificate) GetBoardSignature() *Signature {
 func (m *MatchCertificate) GetSignBytesHash() []byte {
 	if m != nil {
 		return m.SignBytesHash
+	}
+	return nil
+}
+
+func (m *MatchCertificate) GetSettlement() *SettlementInstruction {
+	if m != nil {
+		return m.Settlement
 	}
 	return nil
 }
@@ -1974,6 +2020,7 @@ func (m *BoardRecord) GetContextHash() []byte {
 
 func init() {
 	proto.RegisterEnum("match.v1.DigestAlgorithm", DigestAlgorithm_name, DigestAlgorithm_value)
+	proto.RegisterEnum("match.v1.ResponseType", ResponseType_name, ResponseType_value)
 	proto.RegisterEnum("match.v1.SignatureAlgorithm", SignatureAlgorithm_name, SignatureAlgorithm_value)
 	proto.RegisterEnum("match.v1.SignDocType", SignDocType_name, SignDocType_value)
 	proto.RegisterEnum("match.v1.IntentStatus", IntentStatus_name, IntentStatus_value)
@@ -2604,6 +2651,13 @@ func (m *ResponsePayload) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.ResponseType != 0 {
+		i = encodeVarintTypes(dAtA, i, uint64(m.ResponseType))
+		i--
+		dAtA[i] = 0x1
+		i--
+		dAtA[i] = 0x90
+	}
 	if m.DigestAlgorithm != 0 {
 		i = encodeVarintTypes(dAtA, i, uint64(m.DigestAlgorithm))
 		i--
@@ -3278,6 +3332,18 @@ func (m *MatchCertificate) MarshalToSizedBuffer(dAtA []byte) (int, error) {
 	_ = i
 	var l int
 	_ = l
+	if m.Settlement != nil {
+		{
+			size, err := m.Settlement.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintTypes(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x3a // field 7, wire type 2
+	}
 	if len(m.SignBytesHash) > 0 {
 		i -= len(m.SignBytesHash)
 		copy(dAtA[i:], m.SignBytesHash)
@@ -3734,6 +3800,9 @@ func (m *ResponsePayload) Size() (n int) {
 	if m.DigestAlgorithm != 0 {
 		n += 2 + sovTypes(uint64(m.DigestAlgorithm))
 	}
+	if m.ResponseType != 0 {
+		n += 2 + sovTypes(uint64(m.ResponseType))
+	}
 	return n
 }
 
@@ -4014,6 +4083,10 @@ func (m *MatchCertificate) Size() (n int) {
 	}
 	l = len(m.SignBytesHash)
 	if l > 0 {
+		n += 1 + l + sovTypes(uint64(l))
+	}
+	if m.Settlement != nil {
+		l = m.Settlement.Size()
 		n += 1 + l + sovTypes(uint64(l))
 	}
 	return n
@@ -6128,6 +6201,25 @@ func (m *ResponsePayload) Unmarshal(dAtA []byte) error {
 					break
 				}
 			}
+		case 18:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ResponseType", wireType)
+			}
+			m.ResponseType = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTypes
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.ResponseType |= ResponseType(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
 		default:
 			iNdEx = preIndex
 			skippy, err := skipTypes(dAtA[iNdEx:])
@@ -8234,6 +8326,42 @@ func (m *MatchCertificate) Unmarshal(dAtA []byte) error {
 			m.SignBytesHash = append(m.SignBytesHash[:0], dAtA[iNdEx:postIndex]...)
 			if m.SignBytesHash == nil {
 				m.SignBytesHash = []byte{}
+			}
+			iNdEx = postIndex
+		case 7:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Settlement", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowTypes
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthTypes
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthTypes
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Settlement == nil {
+				m.Settlement = &SettlementInstruction{}
+			}
+			if err := m.Settlement.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
 			}
 			iNdEx = postIndex
 		default:

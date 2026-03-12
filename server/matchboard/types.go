@@ -25,6 +25,9 @@ const (
 	DigestAlgorithmSHA256 = "sha256"
 )
 
+// NativeAsset is the sentinel value for the chain's native coin in offer fields.
+const NativeAsset = "native"
+
 const (
 	SignatureAlgorithmSecp256k1 = "secp256k1"
 	SignatureAlgorithmEd25519   = "ed25519"
@@ -37,9 +40,11 @@ const (
 )
 
 const (
-	IntentTypeRequest  = "request"
-	IntentTypeAccept   = "accept"
-	IntentTypeFinalize = "finalize"
+	IntentTypeRequest        = "request"
+	IntentTypeAccept         = "accept"
+	IntentTypeFinalize       = "finalize"
+	IntentTypeCancelIntent   = "cancel_intent"
+	IntentTypeCancelResponse = "cancel_response"
 )
 
 const (
@@ -91,10 +96,7 @@ var suggestedCodeByError = map[string]string{
 
 // Config configures a matchboard HTTP handler.
 type Config struct {
-	// TokenPrincipalMap maps bearer tokens to principals.
-	TokenPrincipalMap map[string]string
-
-	// RateLimitRequests is the maximum requests allowed per principal inside one RateLimitWindow.
+	// RateLimitRequests is the maximum requests allowed per sender inside one RateLimitWindow.
 	RateLimitRequests int
 
 	// RateLimitWindow is the window size for per-principal rate limiting.
@@ -163,6 +165,20 @@ type GossipIngestor interface {
 	IngestGossipEnvelope(ctx context.Context, intentType string, envelope GossipEnvelope, origin string) error
 }
 
+// Offer describes one side of a swap: an asset being put up and an asset being requested.
+// TokenAddress is an ERC-20 contract address, or the sentinel "native" for the chain's native coin.
+// Amount and MinAmount are uint256 values represented as decimal strings.
+type Offer struct {
+	// AssetIn is what this party is providing (ERC-20 address or "native").
+	AssetIn string `json:"asset_in,omitempty"`
+	// AmountIn is how much of AssetIn is being provided (uint256 decimal).
+	AmountIn string `json:"amount_in,omitempty"`
+	// AssetOut is what this party wants to receive (ERC-20 address or "native").
+	AssetOut string `json:"asset_out,omitempty"`
+	// AmountOut is the minimum (for intents) or exact (for responses) amount of AssetOut (uint256 decimal).
+	AmountOut string `json:"amount_out,omitempty"`
+}
+
 // SignatureMetadata captures signature metadata attached to a signed artifact.
 type SignatureMetadata struct {
 	Signer    string `json:"signer"`
@@ -172,6 +188,9 @@ type SignatureMetadata struct {
 }
 
 // PublishIntentRequest posts an intent artifact with sign-hash metadata.
+// Offer describes what the maker is selling (AssetIn/AmountIn) and what they want in return
+// (AssetOut/AmountOut as a minimum acceptable amount). These fields are optional but strongly
+// recommended so responders can read the open order book and price their offers.
 type PublishIntentRequest struct {
 	ProtocolVersion string `json:"protocol_version,omitempty"`
 	BoardID         string `json:"board_id,omitempty"`
@@ -188,10 +207,17 @@ type PublishIntentRequest struct {
 	TermsHash       string `json:"terms_hash,omitempty"`
 	PolicyHash      string `json:"policy_hash,omitempty"`
 
+	// Offer is the maker's swap terms: what they are selling and what they want back.
+	Offer Offer `json:"offer,omitempty"`
+
 	Signature SignatureMetadata `json:"signature"`
 }
 
 // PublishResponseRequest posts a response artifact with sign-hash metadata.
+// Offer describes what the responder (Bob) is paying. AssetIn/AmountIn is what Bob provides
+// (should match the intent's AssetOut/AmountOut or exceed it). AssetOut/AmountOut is what Bob
+// wants in exchange (should match the intent's AssetIn/AmountIn). Alice reads this from /inbox
+// to decide whether to accept.
 type PublishResponseRequest struct {
 	ProtocolVersion string `json:"protocol_version,omitempty"`
 	BoardID         string `json:"board_id,omitempty"`
@@ -209,6 +235,13 @@ type PublishResponseRequest struct {
 	ContextHash      string `json:"context_hash"`
 	TermsHash        string `json:"terms_hash,omitempty"`
 	PolicyHash       string `json:"policy_hash,omitempty"`
+
+	// Offer is Bob's price: what he is paying and what he wants in return.
+	Offer Offer `json:"offer,omitempty"`
+
+	// ResponseType distinguishes exact acceptance ("ACCEPT") from a counter-offer ("COUNTER_OFFER").
+	// Required. Clients must explicitly declare intent.
+	ResponseType string `json:"response_type"`
 
 	Signature SignatureMetadata `json:"signature"`
 }
@@ -253,6 +286,8 @@ type BoardRecord struct {
 	IntentSignHash   string `json:"intent_sign_hash,omitempty"`
 	ResponseSignHash string `json:"response_sign_hash,omitempty"`
 	FinalizeSignHash string `json:"finalize_sign_hash,omitempty"`
+	// Offer carries the swap terms for this record so recipients can see the price.
+	Offer Offer `json:"offer,omitempty"`
 }
 
 type publishIntentResponse struct {
@@ -434,4 +469,38 @@ type errorStatus struct {
 	Field         string `json:"field,omitempty"`
 	Detail        string `json:"detail,omitempty"`
 	Retryable     bool   `json:"retryable"`
+}
+
+// CancelIntentRequest cancels an open intent. The canceller must be the original initiator (sender).
+// The signature must be over sha256("CANCEL_INTENT:" + pool_id + ":" + intent_id).
+type CancelIntentRequest struct {
+	PoolID    string            `json:"pool_id"`
+	IntentID  string            `json:"intent_id"`
+	Canceller string            `json:"canceller"`
+	Signature SignatureMetadata `json:"signature"`
+}
+
+// CancelIntentResponse is the success response for intent cancellation.
+type CancelIntentResponse struct {
+	PoolID   string `json:"pool_id"`
+	IntentID string `json:"intent_id"`
+	Status   string `json:"status"`
+}
+
+// CancelResponseRequest cancels a posted response. The canceller must be the original responder (sender).
+// The signature must be over sha256("CANCEL_RESPONSE:" + pool_id + ":" + intent_id + ":" + response_id).
+type CancelResponseRequest struct {
+	PoolID     string            `json:"pool_id"`
+	IntentID   string            `json:"intent_id"`
+	ResponseID string            `json:"response_id"`
+	Canceller  string            `json:"canceller"`
+	Signature  SignatureMetadata `json:"signature"`
+}
+
+// CancelResponseResponse is the success response for response cancellation.
+type CancelResponseResponse struct {
+	PoolID     string `json:"pool_id"`
+	IntentID   string `json:"intent_id"`
+	ResponseID string `json:"response_id"`
+	Status     string `json:"status"`
 }

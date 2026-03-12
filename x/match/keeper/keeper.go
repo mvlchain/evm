@@ -16,6 +16,13 @@ import (
 type Keeper struct {
 	cdc      codec.BinaryCodec
 	storeKey storetypes.StoreKey
+
+	// bankKeeper is used to execute native coin and registered-ERC20 transfers during settlement.
+	bankKeeper BankKeeper
+	// erc20Registry resolves ERC-20 contract addresses to cosmos denominations.
+	erc20Registry ERC20Registry
+	// nativeDenom is the chain's native coin denomination (e.g. "aevmos").
+	nativeDenom string
 }
 
 // NewKeeper creates a new x/match keeper.
@@ -24,6 +31,14 @@ func NewKeeper(cdc codec.BinaryCodec, storeKey storetypes.StoreKey) Keeper {
 		cdc:      cdc,
 		storeKey: storeKey,
 	}
+}
+
+// SetSettlementKeepers wires the optional bank and ERC-20 keepers for on-chain settlement execution.
+// Must be called after all keepers are initialised (e.g. after NewKeeper in app.go).
+func (k *Keeper) SetSettlementKeepers(bank BankKeeper, erc20 ERC20Registry, nativeDenom string) {
+	k.bankKeeper = bank
+	k.erc20Registry = erc20
+	k.nativeDenom = nativeDenom
 }
 
 // Logger returns a module-specific logger.
@@ -72,6 +87,19 @@ func (k Keeper) GetReplayParties(ctx sdk.Context, poolID, intentID string) (requ
 		return "", "", false
 	}
 	return requester, responder, true
+}
+
+// SetIntentCancelled records an on-chain cancellation for (pool_id, intent_id).
+// Once set, SubmitMatchCertificate will reject any certificate referencing this intent.
+func (k Keeper) SetIntentCancelled(ctx sdk.Context, poolID, intentID string) {
+	store := ctx.KVStore(k.storeKey)
+	store.Set(types.CancelledIntentStoreKey(poolID, intentID), []byte{1})
+}
+
+// IsIntentCancelled reports whether (pool_id, intent_id) has been cancelled on-chain.
+func (k Keeper) IsIntentCancelled(ctx sdk.Context, poolID, intentID string) bool {
+	store := ctx.KVStore(k.storeKey)
+	return store.Has(types.CancelledIntentStoreKey(poolID, intentID))
 }
 
 // GetAllReplayEntries returns all replay index entries in deterministic key order.

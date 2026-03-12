@@ -191,9 +191,9 @@ which accepts a path for the resulting pprof file.
 	cmd.Flags().Uint(server.FlagInvCheckPeriod, 0, "Assert registered invariants every N blocks")
 	cmd.Flags().Uint64(server.FlagMinRetainBlocks, 0, "Minimum block height offset during ABCI commit to prune CometBFT blocks")
 	cmd.Flags().String(srvflags.AppDBBackend, "", "The type of database for application and snapshots databases")
-	cmd.Flags().Bool(srvflags.MatchboardEnable, false, "Enable in-process matchboard HTTP server")
+	cmd.Flags().Bool(srvflags.MatchboardEnable, true, "Enable in-process matchboard HTTP server")
 	cmd.Flags().String(srvflags.MatchboardAddress, "", "Matchboard HTTP listen address (falls back to MATCHBOARD_ADDR or :8080)")
-	cmd.Flags().Bool(srvflags.MatchboardProposerABCIEnable, false, "Enable ABCI proposer operation injection for in-process matchboard")
+	cmd.Flags().Bool(srvflags.MatchboardProposerABCIEnable, true, "Enable ABCI proposer operation injection for in-process matchboard")
 
 	cmd.Flags().Int(server.FlagMempoolMaxTxs, 0, "The maximum number of transactions in the mempool")
 	// explicitly override the app.toml default value, as normally config file takes precedence over flag defaults

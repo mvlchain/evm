@@ -24,18 +24,13 @@ func TestRuntimeConfigFromEnvDefaults(t *testing.T) {
 	require.True(t, cfg.Handler.EnableIntentStream)
 	require.Equal(t, defaultIntentStreamQueue, cfg.Handler.IntentStreamBuffer)
 	require.Equal(t, defaultMatcherShardCount, cfg.Handler.MatcherShardCount)
-	require.Equal(t, map[string]string{
-		defaultTokenAlice: defaultPrincipalAlice,
-		defaultTokenBob:   defaultPrincipalBob,
-	}, cfg.Handler.TokenPrincipalMap)
 }
 
-func TestRuntimeConfigFromEnvTokenMap(t *testing.T) {
+func TestRuntimeConfigFromEnvAllOptions(t *testing.T) {
 	t.Parallel()
 
 	cfg, err := RuntimeConfigFromEnv(slog.Default(), mapLookupEnv(map[string]string{
 		"MATCHBOARD_ADDR":                 "127.0.0.1:18080",
-		"MATCHBOARD_TOKEN_MAP":            "token-a=alice,token-b=bob",
 		"MATCHBOARD_RATE_LIMIT_REQUESTS":  "7",
 		"MATCHBOARD_RATE_LIMIT_WINDOW":    "3s",
 		"MATCHBOARD_GOSSIP_SHARED_SECRET": "secret-1",
@@ -64,19 +59,6 @@ func TestRuntimeConfigFromEnvTokenMap(t *testing.T) {
 	require.False(t, cfg.Handler.EnableIntentStream)
 	require.Equal(t, 64, cfg.Handler.IntentStreamBuffer)
 	require.Equal(t, 8, cfg.Handler.MatcherShardCount)
-	require.Equal(t, map[string]string{
-		"token-a": "alice",
-		"token-b": "bob",
-	}, cfg.Handler.TokenPrincipalMap)
-}
-
-func TestRuntimeConfigFromEnvInvalidTokenMap(t *testing.T) {
-	t.Parallel()
-
-	_, err := RuntimeConfigFromEnv(slog.Default(), mapLookupEnv(map[string]string{
-		"MATCHBOARD_TOKEN_MAP": "invalid",
-	}))
-	require.Error(t, err)
 }
 
 func TestRuntimeConfigFromEnvInvalidGossipTimeout(t *testing.T) {
@@ -127,11 +109,7 @@ func TestRuntimeConfigFromEnvInvalidMatcherShards(t *testing.T) {
 func TestNewHandlerSupportsGossipIngestor(t *testing.T) {
 	t.Parallel()
 
-	h, err := NewHandler(Config{
-		TokenPrincipalMap: map[string]string{
-			"token-a": "alice",
-		},
-	})
+	h, err := NewHandler(Config{})
 	require.NoError(t, err)
 	_, ok := h.(GossipIngestor)
 	require.True(t, ok)

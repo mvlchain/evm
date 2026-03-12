@@ -48,6 +48,9 @@ func (k Keeper) SubmitMatchCertificate(
 	poolID := req.Certificate.Payload.PoolId
 	intentID := req.Certificate.Payload.IntentId
 	replayKey := types.ReplayKeyString(poolID, intentID)
+	if k.IsIntentCancelled(ctx, poolID, intentID) {
+		return nil, errorsmod.Wrapf(types.ErrIntentCancelled, "intent has been cancelled: %s", replayKey)
+	}
 	if k.HasReplay(ctx, poolID, intentID) {
 		return nil, errorsmod.Wrapf(types.ErrReplayDetected, "replay key already exists: %s", replayKey)
 	}
@@ -59,6 +62,10 @@ func (k Keeper) SubmitMatchCertificate(
 	}
 	k.SetReplay(ctx, poolID, intentID, matchID)
 	k.SetReplayParties(ctx, poolID, intentID, req.Certificate.Payload.Initiator, req.Certificate.Payload.Responder)
+
+	if err := k.executeSettlement(ctx, req.Certificate); err != nil {
+		return nil, err
+	}
 
 	ctx.EventManager().EmitEvent(
 		sdk.NewEvent(

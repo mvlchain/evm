@@ -97,6 +97,87 @@ npm run test:flow:docker
 `MATCH_DOCKER_BUILD=0`, `EVMD_GOSSIP_IMAGE=...`, `MATCH_DOCKER_KEEP=1` 환경변수는
 `test:gossip:docker`와 동일하게 사용할 수 있다.
 
+
+## 4노드 하드웨어 실측 벤치
+
+4개 노드(`evmdhw0..3`)를 docker로 띄운 상태에서, target TPS별(기본 `50,100,500,1000`)로
+`intent -> response -> finalize` 플로우를 부하 생성하고 `docker stats`를 샘플링해
+CPU/RAM 추천치를 계산한다.
+
+```bash
+cd typescript
+npm run bench:hardware:up
+npm run bench:hardware
+```
+
+정리:
+
+```bash
+cd typescript
+npm run bench:hardware:down
+```
+
+옵션 예시:
+
+```bash
+# 50/100/500/1000, 각 20초씩
+npm run bench:hardware -- --targets=50,100,500,1000 --duration=20
+
+# 컨테이너/엔드포인트 커스텀
+MATCH_HW_CONTAINERS=evmdhw0,evmdhw1,evmdhw2,evmdhw3 \
+MATCH_HW_BASE_URLS=http://127.0.0.1:28080,http://127.0.0.1:28081,http://127.0.0.1:28082,http://127.0.0.1:28083 \
+npm run bench:hardware -- --duration=30
+```
+
+출력:
+- 콘솔 Markdown 표 (target TPS / observed flow/s / CPU p95 / RAM p95 / 추천 vCPU/RAM)
+- JSON 리포트 파일: `typescript/hardware-bench-<timestamp>.json`
+
+참고:
+- 기본 토큰/프린시펄은 `local_node.sh` 기본값(`token-alice`, `token-bob`, 기본 0x 주소)을 사용한다.
+- 프린시펄/키를 바꿨다면 아래 환경변수도 함께 맞춰야 한다.
+  - `MATCHBOARD_PRINCIPAL_ALICE`, `MATCHBOARD_PRINCIPAL_BOB`
+  - `MATCHBOARD_ALICE_PRIVATE_KEY`, `MATCHBOARD_BOB_PRIVATE_KEY`
+
+## 4노드 EVM 트랜잭션 하드웨어 벤치 (권장)
+
+매치보드 HTTP가 아니라 **일반 EVM raw tx(`eth_sendRawTransaction`)**를 생성해
+target TPS별(기본 `50,100,500,1000`) 성능을 측정한다.
+
+```bash
+cd typescript
+npm run bench:evm:up
+npm run bench:evm -- --targets=50,100,500,1000 --duration=30 --settle=10 --sender-count=128
+```
+
+정리:
+
+```bash
+cd typescript
+npm run bench:evm:down
+```
+
+옵션/환경변수:
+- `--targets`, `--duration`, `--settle`, `--workers`, `--sample-ms`, `--output`
+- `--sender-count` (송신 지갑 개수, 기본 32)
+- `MATCH_EVM_RPC_URLS` (기본: `http://127.0.0.1:28545,28555,28565,28575`)
+- `MATCH_EVM_CONTAINERS` (기본: `evmevm0,evmevm1,evmevm2,evmevm3`)
+- `MATCH_EVM_FUNDER_PRIVATE_KEY`, `MATCH_EVM_RECIPIENT`
+- `MATCH_EVM_FUND_WEI` (sender 지갑당 초기 펀딩 금액)
+- `MATCH_EVM_COMMIT_TIMEOUT` (기본 `500ms`, 블록 생성 속도 튜닝)
+- `MATCH_EVM_EMPTY_BLOCK_INTERVAL` (기본 `0s`)
+- `MATCH_EVM_SKIP_TIMEOUT_COMMIT` (기본 `true`)
+- `MATCH_EVM_TIMEOUT_PROPOSE` / `MATCH_EVM_TIMEOUT_PREVOTE` / `MATCH_EVM_TIMEOUT_PRECOMMIT`
+
+참고:
+- 높은 TPS(예: 500~1000)에서는 single wallet nonce 직렬화 병목이 생기므로 `--sender-count`를 충분히 크게 두는 것을 권장.
+- 예: `--sender-count=1000` (환경에 따라 초기 펀딩 시간이 길어질 수 있음)
+- 스크립트는 기본적으로 **gas bump로 교체(replacement)** 하지 않고, sender별 이전 nonce가 체인에서 소진될 때까지 기다린 뒤 다음 tx를 전송한다.
+
+출력:
+- 콘솔 Markdown 표 (target TPS / sent TPS / included TPS / fail% / CPU p95 / RAM p95 / 추천 vCPU/RAM)
+- JSON 리포트: `typescript/evm-hardware-bench-<timestamp>.json`
+
 ## 타입체크
 
 ```bash

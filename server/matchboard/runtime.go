@@ -15,12 +15,6 @@ const (
 	DefaultAddr = ":8080"
 )
 
-const (
-	defaultTokenAlice     = "token-alice"
-	defaultTokenBob       = "token-bob"
-	defaultPrincipalAlice = "0xC6Fe5D33615a1C52c08018c47E8Bc53646A0E101"
-	defaultPrincipalBob   = "0x963EBDf2e1f8DB8707D05FC75bfeFFBa1B5BaC17"
-)
 
 // RuntimeConfig controls matchboard process-level startup behavior.
 type RuntimeConfig struct {
@@ -41,10 +35,6 @@ func RuntimeConfigFromEnv(logger *slog.Logger, lookupEnv func(string) (string, b
 	}
 
 	addr := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_ADDR", DefaultAddr))
-	tokenMap, err := loadTokenPrincipalMap(lookupEnv)
-	if err != nil {
-		return RuntimeConfig{}, fmt.Errorf("invalid token configuration: %w", err)
-	}
 
 	rateLimitRequests, err := intEnv(lookupEnv, "MATCHBOARD_RATE_LIMIT_REQUESTS", 60)
 	if err != nil {
@@ -92,7 +82,6 @@ func RuntimeConfigFromEnv(logger *slog.Logger, lookupEnv func(string) (string, b
 	return RuntimeConfig{
 		Address: addr,
 		Handler: Config{
-			TokenPrincipalMap:     tokenMap,
 			RateLimitRequests:     rateLimitRequests,
 			RateLimitWindow:       rateLimitWindow,
 			Logger:                logger,
@@ -178,48 +167,6 @@ func StartServer(ctx context.Context, cfg RuntimeConfig) error {
 	return nil
 }
 
-func loadTokenPrincipalMap(lookupEnv func(string) (string, bool)) (map[string]string, error) {
-	if raw := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_TOKEN_MAP", "")); raw != "" {
-		out := make(map[string]string)
-		pairs := strings.Split(raw, ",")
-		for _, pair := range pairs {
-			pair = strings.TrimSpace(pair)
-			if pair == "" {
-				continue
-			}
-
-			parts := strings.SplitN(pair, "=", 2)
-			if len(parts) != 2 {
-				return nil, strconv.ErrSyntax
-			}
-
-			token := strings.TrimSpace(parts[0])
-			principal := strings.TrimSpace(parts[1])
-			if token == "" || principal == "" {
-				return nil, strconv.ErrSyntax
-			}
-			out[token] = principal
-		}
-		if len(out) == 0 {
-			return nil, strconv.ErrSyntax
-		}
-		return out, nil
-	}
-
-	aliceToken := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_TOKEN_ALICE", defaultTokenAlice))
-	bobToken := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_TOKEN_BOB", defaultTokenBob))
-	alicePrincipal := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_PRINCIPAL_ALICE", defaultPrincipalAlice))
-	bobPrincipal := strings.TrimSpace(getEnvWithDefault(lookupEnv, "MATCHBOARD_PRINCIPAL_BOB", defaultPrincipalBob))
-
-	if aliceToken == "" || bobToken == "" || alicePrincipal == "" || bobPrincipal == "" {
-		return nil, strconv.ErrSyntax
-	}
-
-	return map[string]string{
-		aliceToken: alicePrincipal,
-		bobToken:   bobPrincipal,
-	}, nil
-}
 
 func intEnv(lookupEnv func(string) (string, bool), key string, fallback int) (int, error) {
 	raw := strings.TrimSpace(getEnvWithDefault(lookupEnv, key, ""))

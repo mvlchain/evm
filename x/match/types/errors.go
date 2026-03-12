@@ -16,14 +16,19 @@ const (
 )
 
 const (
-	CodeInvalidRequest uint32 = 1000
-	CodeInvalidSig     uint32 = 1101
-	CodeSignerMismatch uint32 = 1102
-	CodeHashMismatch   uint32 = 1200
-	CodeExpired        uint32 = 1201
-	CodeReplayDetected uint32 = 1202
-	CodeChainRejected  uint32 = 1400
+	CodeInvalidRequest   uint32 = 1000
+	CodeInvalidSig       uint32 = 1101
+	CodeSignerMismatch   uint32 = 1102
+	CodeHashMismatch     uint32 = 1200
+	CodeExpired          uint32 = 1201
+	CodeReplayDetected   uint32 = 1202
+	CodeChainRejected    uint32 = 1400
+	CodeSettlementFailed uint32 = 1401
+	CodeIntentCancelled  uint32 = 1402
 )
+
+// NativeAsset is the sentinel value for the chain's native coin in SettlementInstruction.
+const NativeAsset = "native"
 
 var (
 	ErrInvalidRequest   = errorsmod.Register(ModuleName, CodeInvalidRequest, "invalid request")
@@ -33,4 +38,6 @@ var (
 	ErrExpired          = errorsmod.Register(ModuleName, CodeExpired, "artifact expired")
 	ErrReplayDetected   = errorsmod.Register(ModuleName, CodeReplayDetected, "replay detected")
 	ErrChainRejected    = errorsmod.Register(ModuleName, CodeChainRejected, "chain rejected certificate")
+	ErrSettlementFailed = errorsmod.Register(ModuleName, CodeSettlementFailed, "settlement execution failed")
+	ErrIntentCancelled  = errorsmod.Register(ModuleName, CodeIntentCancelled, "intent has been cancelled")
 )

@@ -492,6 +492,13 @@ func NewExampleApp(
 		&app.TransferKeeper,
 	)
 
+	// Wire settlement keepers into MatchKeeper now that Erc20Keeper is ready.
+	app.MatchKeeper.SetSettlementKeepers(
+		app.BankKeeper,
+		erc20RegistryAdapter{&app.Erc20Keeper},
+		sdk.DefaultBondDenom,
+	)
+
 	// instantiate IBC transfer keeper AFTER the ERC-20 keeper to use it in the instantiation
 	app.TransferKeeper = transferkeeper.NewKeeper(
 		appCodec,
@@ -992,12 +999,20 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 		if strings.TrimSpace(submitter) == "" {
 			submitter = injectedMatchTxSubmitterID
 		}
-		ctx := app.NewContextLegacy(false, cmtproto.Header{
+		// BaseApp.FinalizeBlock internally calls workingHash() → finalizeBlockState.ms.Write(),
+		// which flushes the CacheMultiStore dirty cache to cms. Writes to finalizeBlockState.ms
+		// after that point are never re-flushed (Commit() calls cms.Commit() directly, without
+		// a second ms.Write()). To ensure cert writes are persisted, we write through a fresh
+		// CacheMultiStore backed by cms and flush immediately before Commit() is called.
+		cacheMS := app.CommitMultiStore().CacheMultiStore()
+		ctx := sdk.NewContext(cacheMS, cmtproto.Header{
 			Height: req.Height,
 			Time:   req.Time,
-		})
+		}, false, app.Logger())
 		if _, submitErr := app.MatchKeeper.SubmitMatchCertificateBatch(ctx, submitter, certificates); submitErr != nil {
 			setInjectedErr("certificate_batch_rejected", fmt.Errorf("injected match operation batch rejected: %w", submitErr))
+		} else {
+			cacheMS.Write()
 		}
 	}
 
@@ -1028,7 +1043,15 @@ func (app *EVMD) FinalizeBlock(req *abci.RequestFinalizeBlock) (res *abci.Respon
 	res.TxResults = mergedResults
 
 	if injectedErr == nil && len(injectedIDs) > 0 {
-		_, _, _, _ = matchboard.CommitABCIProposedOperations(injectedIDs)
+		_, _, _, commitErr := matchboard.CommitABCIProposedOperations(injectedIDs)
+		if commitErr != nil {
+			app.Logger().Warn(
+				"injected match operations queue commit failed",
+				"height", req.Height,
+				"operations", len(injectedIDs),
+				"error", commitErr,
+			)
+		}
 		app.Logger().Info(
 			"injected match operations committed",
 			"height", req.Height,
@@ -1335,4 +1358,21 @@ func (app *EVMD) AutoCliOpts() autocli.AppOptions {
 		ValidatorAddressCodec: evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32ValidatorAddrPrefix()),
 		ConsensusAddressCodec: evmaddress.NewEvmCodec(sdk.GetConfig().GetBech32ConsensusAddrPrefix()),
 	}
+}
+
+// erc20RegistryAdapter bridges erc20keeper.Keeper to the matchkeeper.ERC20Registry interface.
+type erc20RegistryAdapter struct {
+	keeper *erc20keeper.Keeper
+}
+
+func (a erc20RegistryAdapter) GetDenomForERC20(ctx sdk.Context, erc20Addr common.Address) (string, bool) {
+	id := a.keeper.GetERC20Map(ctx, erc20Addr)
+	if len(id) == 0 {
+		return "", false
+	}
+	pair, ok := a.keeper.GetTokenPair(ctx, id)
+	if !ok {
+		return "", false
+	}
+	return pair.Denom, true
 }

@@ -208,6 +208,9 @@ func (p *IntentPayload) validateBasic() error {
 	if p == nil {
 		return errorsmod.Wrap(ErrInvalidRequest, "intent.payload is required")
 	}
+	if err := requireID("intent.chain_id", p.ChainId); err != nil {
+		return err
+	}
 	if err := requireID("intent.pool_id", p.PoolId); err != nil {
 		return err
 	}
@@ -243,6 +246,9 @@ func (p *ResponsePayload) validateBasic() error {
 	if p == nil {
 		return errorsmod.Wrap(ErrInvalidRequest, "response.payload is required")
 	}
+	if err := requireID("response.chain_id", p.ChainId); err != nil {
+		return err
+	}
 	if err := requireID("response.pool_id", p.PoolId); err != nil {
 		return err
 	}
@@ -264,7 +270,13 @@ func (p *ResponsePayload) validateBasic() error {
 	if err := requireHash32("response.context_hash", p.ContextHash); err != nil {
 		return err
 	}
-	return validateDigestAlgorithm("response.digest_algorithm", p.DigestAlgorithm)
+	if err := validateDigestAlgorithm("response.digest_algorithm", p.DigestAlgorithm); err != nil {
+		return err
+	}
+	if p.ResponseType == ResponseType_RESPONSE_TYPE_UNSPECIFIED {
+		return errorsmod.Wrap(ErrInvalidRequest, "response.response_type must be ACCEPT or COUNTER_OFFER")
+	}
+	return nil
 }
 
 func (s *SignedResponse) validateBasic() error {
@@ -283,6 +295,9 @@ func (s *SignedResponse) validateBasic() error {
 func (p *FinalizePayload) validateBasic() error {
 	if p == nil {
 		return errorsmod.Wrap(ErrInvalidRequest, "finalize.payload is required")
+	}
+	if err := requireID("finalize.chain_id", p.ChainId); err != nil {
+		return err
 	}
 	if err := requireID("finalize.pool_id", p.PoolId); err != nil {
 		return err
@@ -336,6 +351,9 @@ func (s *SignedFinalize) validateBasic() error {
 func (p *CertificatePayload) validateBasic() error {
 	if p == nil {
 		return errorsmod.Wrap(ErrInvalidRequest, "certificate.payload is required")
+	}
+	if err := requireID("certificate.chain_id", p.ChainId); err != nil {
+		return err
 	}
 	if err := requireID("certificate.pool_id", p.PoolId); err != nil {
 		return err
