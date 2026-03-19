@@ -22,7 +22,7 @@ const (
 	ExampleDisplayDenom = "atom"
 
 	// ExampleBech32Prefix provides an example Bech32 prefix for use in tests
-	ExampleBech32Prefix = "cosmos"
+	ExampleBech32Prefix = "tada"
 
 	// EighteenDecimalsChainID provides an example EIP-155 chain ID for use in tests
 	EighteenDecimalsChainID = 9001
