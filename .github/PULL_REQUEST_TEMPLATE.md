@@ -1,23 +1,50 @@
-# Description
+Describe this PR here in a three-line summary.
 
-<!-- Add a description of the changes that this PR introduces and the files that
-are the most critical to review. -->
+### PR Type
 
-<!-- Please keep your PR as draft until it's ready for review -->
+<!-- Please check the one that applies to this PR using "x". -->
 
-<!-- Pull requests that sit inactive for longer than 30 days will be closed.  -->
+```
+[ ] Implementation
+[ ] Bug fix
+[ ] Refactoring (no functional changes, no API changes)
+[ ] Test codes
+[ ] Code style update (formatting, local variables)
+[ ] CI/Infra related changes
+[ ] Clone or Create new package/app
+[ ] Other (Please describe):
+```
 
-Closes: #XXXX
+### Current behavior (As-Is)
 
----
+<!-- Please describe the current behavior that you are modifying, or link to a relevant issue. -->
 
-## Author Checklist
+Issue Number: [MIP-XXX](https://mvlchain.atlassian.net/browse/MIP-XXX)
 
-**All** items are required. Please add a note to the item if the item is not applicable and
-please add links to any relevant follow up issues.
+### New behavior (To-Be)
 
-I have...
+<!-- Please describe what your PR wants to achieve. -->
 
-- [ ] tackled an existing issue or discussed with a team member
-- [ ] left instructions on how to review the changes
-- [ ] targeted the `main` branch
+### Breaking change?
+
+<!-- Is this PR blocks previously working behavior? -->
+
+```
+[ ] Yes
+[ ] No
+```
+
+<!-- If Yes, please describe the impact and migration path for existing applications below. -->
+
+### To-Do List (Optional)
+
+<!-- In the case of a big change, if you think review is required during implementation -->
+
+- [ ] Done
+- [ ] Not yet
+
+### Other information
+
+<!-- Related slack thread, notion documents -->
+
+- [Link Name](https://)
