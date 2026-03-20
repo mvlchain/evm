@@ -37,7 +37,7 @@ jobs:
           cache: true
           cache-dependency-path: |
             go.sum
-            evmd/go.sum
+            tadad/go.sum
 
       - name: Get version info
         id: version
@@ -55,42 +55,42 @@ jobs:
           echo "tmversion=${TMVERSION}" >> "$GITHUB_OUTPUT"
           echo "branch=${BRANCH_NAME}" >> "$GITHUB_OUTPUT"
 
-      - name: Build evmd
-        working-directory: evmd
+      - name: Build tadad
+        working-directory: tadad
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: "1"
         shell: bash
         run: |
-          BINARY_NAME="evmd-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}"
+          BINARY_NAME="tadad-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}"
 
           go build \
             -trimpath \
             -tags "netgo" \
             -ldflags "-w -s \
-              -X github.com/cosmos/cosmos-sdk/version.Name=evmd \
-              -X github.com/cosmos/cosmos-sdk/version.AppName=evmd \
+              -X github.com/cosmos/cosmos-sdk/version.Name=tadad \
+              -X github.com/cosmos/cosmos-sdk/version.AppName=tadad \
               -X github.com/cosmos/cosmos-sdk/version.Version=${{ steps.version.outputs.version }} \
               -X github.com/cosmos/cosmos-sdk/version.Commit=${{ steps.version.outputs.commit }} \
               -X github.com/cometbft/cometbft/version.TMCoreSemVer=${{ steps.version.outputs.tmversion }} \
               -X github.com/cosmos/cosmos-sdk/version.BuildTags=netgo" \
             -o "${BINARY_NAME}" \
-            ./cmd/evmd
+            ./cmd/tadad
 
       - name: Generate checksum
-        working-directory: evmd
+        working-directory: tadad
         shell: bash
         run: |
-          BINARY_NAME="evmd-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}"
+          BINARY_NAME="tadad-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}"
           sha256sum "${BINARY_NAME}" > "${BINARY_NAME}.sha256"
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:
-          name: evmd-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}
+          name: tadad-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}
           path: |
-            evmd/evmd-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}
-            evmd/evmd-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}.sha256
+            tadad/tadad-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}
+            tadad/tadad-${{ steps.version.outputs.branch }}-${{ steps.version.outputs.commit_short }}-linux-${{ matrix.goarch }}.sha256
           retention-days: 30
           if-no-files-found: error

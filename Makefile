@@ -14,7 +14,7 @@ COMMIT := $(shell git log -1 --format='%H')
 
 BINDIR ?= $(GOPATH)/bin
 BUILDDIR ?= $(CURDIR)/build
-EXAMPLE_BINARY := evmd
+EXAMPLE_BINARY := tadad
 
 ###############################################################################
 ###                              Repo Info                                  ###
@@ -29,12 +29,12 @@ export GO111MODULE = on
 ###                            Submodule Settings                           ###
 ###############################################################################
 
-# evmd is a separate module under ./evmd
-EVMD_DIR      := evmd
-EVMD_MAIN_PKG := ./cmd/evmd
+# tadad is a separate module under ./tadad
+EVMD_DIR      := tadad
+EVMD_MAIN_PKG := ./cmd/tadad
 
 ###############################################################################
-###                        Build & Install evmd                             ###
+###                        Build & Install tadad                             ###
 ###############################################################################
 
 # process build tags
@@ -96,7 +96,7 @@ endif
 
 # Build into $(BUILDDIR)
 build: go.sum $(BUILDDIR)/
-	echo "🏗️  Building evmd to $(BUILDDIR)/$(EXAMPLE_BINARY) ..."
+	echo "🏗️  Building tadad to $(BUILDDIR)/$(EXAMPLE_BINARY) ..."
 	echo "BUILD_FLAGS: $(BUILD_FLAGS)"
 	cd $(EVMD_DIR) && CGO_ENABLED="1" \
 	  go build $(BUILD_FLAGS) -o $(BUILDDIR)/$(EXAMPLE_BINARY) $(EVMD_MAIN_PKG)
@@ -107,7 +107,7 @@ build-linux:
 
 # Install into $(BINDIR)
 install: go.sum
-	@echo "🚚  Installing evmd to $(BINDIR) ..."
+	@echo "🚚  Installing tadad to $(BINDIR) ..."
 	@echo "BUILD_FLAGS: $(BUILD_FLAGS)"
 	@cd $(EVMD_DIR) && CGO_ENABLED="1" \
 	  go install $(BUILD_FLAGS) $(EVMD_MAIN_PKG)
@@ -138,13 +138,13 @@ vulncheck:
 
 PACKAGES_NOSIMULATION=$(shell go list ./... | grep -v '/simulation')
 PACKAGES_UNIT := $(shell go list ./... | grep -v '/tests/e2e$$' | grep -v '/simulation')
-PACKAGES_EVMD := $(shell cd evmd && go list ./... | grep -v '/simulation')
+PACKAGES_TADAD := $(shell cd tadad && go list ./... | grep -v '/simulation')
 COVERPKG_EVM  := $(shell go list ./... | grep -v '/tests/e2e$$' | grep -v '/simulation' | paste -sd, -)
 COVERPKG_ALL  := $(COVERPKG_EVM)
 COMMON_COVER_ARGS := -timeout=15m -covermode=atomic
 
 TEST_PACKAGES := ./...
-TEST_TARGETS := test-unit test-evmd test-unit-cover test-race
+TEST_TARGETS := test-unit test-tadad test-unit-cover test-race
 
 test-unit: ARGS=-timeout=15m
 test-unit: TEST_PACKAGES=$(PACKAGES_UNIT)
@@ -154,19 +154,19 @@ test-race: ARGS=-race
 test-race: TEST_PACKAGES=$(PACKAGES_UNIT)
 test-race: run-tests
 
-test-evmd: ARGS=-timeout=15m
-test-evmd:
-	@cd evmd && go test -count=1 -race -tags=test -mod=readonly $(ARGS) $(EXTRA_ARGS) $(PACKAGES_EVMD)
+test-tadad: ARGS=-timeout=15m
+test-tadad:
+	@cd tadad && go test -count=1 -race -tags=test -mod=readonly $(ARGS) $(EXTRA_ARGS) $(PACKAGES_TADAD)
 
 test-unit-cover: ARGS=-timeout=15m -coverprofile=coverage.txt -covermode=atomic
 test-unit-cover: TEST_PACKAGES=$(PACKAGES_UNIT)
 test-unit-cover: run-tests
 	@echo "🔍 Running evm (root) coverage..."
 	@go test -race -tags=test $(COMMON_COVER_ARGS) -coverpkg=$(COVERPKG_ALL) -coverprofile=coverage.txt ./...
-	@echo "🔍 Running evmd coverage..."
-	@cd evmd && go test -race -tags=test $(COMMON_COVER_ARGS) -coverpkg=$(COVERPKG_ALL) -coverprofile=coverage_evmd.txt ./...
-	@echo "🔀 Merging evmd coverage into root coverage..."
-	@tail -n +2 evmd/coverage_evmd.txt >> coverage.txt && rm evmd/coverage_evmd.txt
+	@echo "🔍 Running tadad coverage..."
+	@cd tadad && go test -race -tags=test $(COMMON_COVER_ARGS) -coverpkg=$(COVERPKG_ALL) -coverprofile=coverage_tadad.txt ./...
+	@echo "🔀 Merging tadad coverage into root coverage..."
+	@tail -n +2 tadad/coverage_tadad.txt >> coverage.txt && rm tadad/coverage_tadad.txt
 	@echo "🧹 Filtering ignored files from coverage.txt..."
 	@grep -v -E '/cmd/|/client/|/proto/|/testutil/|/mocks/|/test_.*\.go:|\.pb\.go:|\.pb\.gw\.go:|/x/[^/]+/module\.go:|/scripts/|/ibc/testing/|/version/|\.md:|\.pulsar\.go:' coverage.txt > tmp_coverage.txt && mv tmp_coverage.txt coverage.txt
 
@@ -175,8 +175,8 @@ test: test-unit
 test-all:
 	@echo "🔍 Running evm module tests..."
 	@go test -race -tags=test -mod=readonly -timeout=15m $(PACKAGES_NOSIMULATION)
-	@echo "🔍 Running evmd module tests..."
-	@cd evmd && go test -race -tags=test -mod=readonly -timeout=15m $(PACKAGES_EVMD)
+	@echo "🔍 Running tadad module tests..."
+	@cd tadad && go test -race -tags=test -mod=readonly -timeout=15m $(PACKAGES_TADAD)
 
 run-tests:
 ifneq (,$(shell which tparse 2>/dev/null))
@@ -351,10 +351,10 @@ contracts-add:
 ###############################################################################
 
 localnet-build-env:
-	$(MAKE) -C contrib/images evmd-env
+	$(MAKE) -C contrib/images tadad-env
 
 localnet-build-nodes:
-	$(DOCKER) run --rm -v $(CURDIR)/.testnets:/data cosmos/evmd \
+	$(DOCKER) run --rm -v $(CURDIR)/.testnets:/data cosmos/tadad \
 			  testnet init-files --validator-count 4 -o /data --starting-ip-address 192.168.10.2 --keyring-backend=test --chain-id=local-4221 --use-docker=true
 	docker compose up -d
 
@@ -376,7 +376,7 @@ test-rpc-compat-stop:
 
 test-system: build-v05 build
 	mkdir -p ./tests/systemtests/binaries/
-	cp $(BUILDDIR)/evmd ./tests/systemtests/binaries/
+	cp $(BUILDDIR)/tadad ./tests/systemtests/binaries/
 	cd tests/systemtests/Counter && forge build
 	$(MAKE) -C tests/systemtests test
 
@@ -384,7 +384,7 @@ build-v05:
 	mkdir -p ./tests/systemtests/binaries/v0.5
 	git checkout v0.5.1
 	make build
-	cp $(BUILDDIR)/evmd ./tests/systemtests/binaries/v0.5
+	cp $(BUILDDIR)/tadad ./tests/systemtests/binaries/v0.5
 	git checkout -
 
 mocks:
