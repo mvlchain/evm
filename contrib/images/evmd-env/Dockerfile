@@ -29,14 +29,15 @@ WORKDIR /tadad
 
 # Copy the wrapper script and binary to expected locations
 COPY contrib/images/evmd-env/wrapper.sh /usr/bin/wrapper.sh
+COPY contrib/images/evmd-env/entrypoint.sh /usr/bin/entrypoint.sh
 COPY --from=tadad-builder /work/build/tadad /tadad/
 COPY --from=tadad-builder /work/build/tadad /usr/local/bin/
 
 # Set proper ownership and permissions before switching to nonroot user
 RUN chown nonroot:nonroot /usr/bin/wrapper.sh && chmod +x /usr/bin/wrapper.sh
+RUN chown nonroot:nonroot /usr/bin/entrypoint.sh && chmod +x /usr/bin/entrypoint.sh
 RUN chown -R nonroot:nonroot /tadad
 
 USER nonroot
 
-ENTRYPOINT ["/usr/bin/wrapper.sh"]
-CMD ["start", "--log_format", "plain", "--minimum-gas-prices", "0.0001atest", "--json-rpc.enable", "true", "--json-rpc.api", "eth,txpool,personal,net,debug,web3", "--chain-id", "local-4221"]
+ENTRYPOINT ["/usr/bin/entrypoint.sh"]
