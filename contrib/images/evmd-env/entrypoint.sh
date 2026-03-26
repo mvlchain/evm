@@ -90,7 +90,7 @@ case "$NODE_TYPE" in
       --minimum-gas-prices=0.0001wei \
       --evm.min-tip=0 \
       --home "$TADAD_HOME" \
-      --json-rpc.api eth,txpool,personal,net,debug,web3 \
+      --json-rpc.api eth,net,web3 \
       --chain-id "$CHAIN_ID"
     ;;
   full)
