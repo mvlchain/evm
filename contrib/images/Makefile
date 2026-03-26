@@ -1,10 +1,10 @@
-all: evmd-env
+all: tadad-env
 
-evmd-env: evmd-rmi
-	docker build --tag cosmos/evmd -f evmd-env/Dockerfile \
+tadad-env: tadad-rmi
+	docker build --tag cosmos/tadad -f evmd-env/Dockerfile \
 		$(shell git rev-parse --show-toplevel)
 
-evmd-rmi:
-	docker rmi cosmos/evmd 2>/dev/null; true
+tadad-rmi:
+	docker rmi cosmos/tadad 2>/dev/null; true
 
-.PHONY: all evmd-env evmd-rmi
+.PHONY: all tadad-env tadad-rmi

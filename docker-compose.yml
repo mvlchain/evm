@@ -1,13 +1,13 @@
 version: "3"
 
 services:
-  evmdnode0:
-    container_name: evmdnode0
-    image: "cosmos/evmd"
+  tadadnode0:
+    container_name: tadadnode0
+    image: "cosmos/tadad"
     environment:
       - DEBUG=0
       - ID=0
-      - LOG=${LOG:-evmd.log}
+      - LOG=${LOG:-tadad.log}
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -25,13 +25,13 @@ services:
       localnet:
         ipv4_address: 192.168.10.2
 
-  evmdnode1:
-    container_name: evmdnode1
-    image: "cosmos/evmd"
+  tadadnode1:
+    container_name: tadadnode1
+    image: "cosmos/tadad"
     environment:
       - DEBUG=0
       - ID=1
-      - LOG=${LOG:-evmd.log}
+      - LOG=${LOG:-tadad.log}
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -49,13 +49,13 @@ services:
       localnet:
         ipv4_address: 192.168.10.3
 
-  evmdnode2:
-    container_name: evmdnode2
-    image: "cosmos/evmd"
+  tadadnode2:
+    container_name: tadadnode2
+    image: "cosmos/tadad"
     environment:
       - DEBUG=0
       - ID=2
-      - LOG=${LOG:-evmd.log}
+      - LOG=${LOG:-tadad.log}
     cap_add:
       - SYS_PTRACE
     security_opt:
@@ -73,13 +73,13 @@ services:
       localnet:
         ipv4_address: 192.168.10.4
 
-  evmdnode3:
-    container_name: evmdnode3
-    image: "cosmos/evmd"
+  tadadnode3:
+    container_name: tadadnode3
+    image: "cosmos/tadad"
     environment:
       - DEBUG=0
       - ID=3
-      - LOG=${LOG:-evmd.log}
+      - LOG=${LOG:-tadad.log}
     cap_add:
       - SYS_PTRACE
     security_opt:
