@@ -221,6 +221,7 @@ sed -i.bak 's/type = "flood"/type = "app"/g'                                    
 
 # app.toml
 cp "$APP_TOML" "$OUTPUT_DIR/validator/app.toml"
+sed -i.bak 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.0001wei"/g'      "$OUTPUT_DIR/validator/app.toml"
 sed -i.bak 's/prometheus-retention-time  = "0"/prometheus-retention-time  = "1000000000000"/g' "$OUTPUT_DIR/validator/app.toml"
 sed -i.bak 's/enabled = false/enabled = true/g'                                   "$OUTPUT_DIR/validator/app.toml"
 sed -i.bak 's/enable = false/enable = true/g'                                     "$OUTPUT_DIR/validator/app.toml"
@@ -243,6 +244,7 @@ sed -i.bak 's|laddr = "tcp://127.0.0.1:26657"|laddr = "tcp://0.0.0.0:26657"|g'  
 
 # app.toml
 cp "$APP_TOML" "$OUTPUT_DIR/full/app.toml"
+sed -i.bak 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.0001wei"/g'      "$OUTPUT_DIR/full/app.toml"
 sed -i.bak 's/enabled = false/enabled = true/g'                                   "$OUTPUT_DIR/full/app.toml"
 sed -i.bak 's/enable = false/enable = true/g'                                     "$OUTPUT_DIR/full/app.toml"
 # JSON-RPC: open for external access
@@ -266,6 +268,7 @@ sed -i.bak "s|persistent_peers = \"\"|persistent_peers = \"$PERSISTENT_PEERS\"|g
 
 # app.toml
 cp "$APP_TOML" "$OUTPUT_DIR/archive/app.toml"
+sed -i.bak 's/^minimum-gas-prices = ".*"/minimum-gas-prices = "0.0001wei"/g'      "$OUTPUT_DIR/archive/app.toml"
 sed -i.bak 's/enabled = false/enabled = true/g'                                   "$OUTPUT_DIR/archive/app.toml"
 sed -i.bak 's/enable = false/enable = true/g'                                     "$OUTPUT_DIR/archive/app.toml"
 sed -i.bak 's/enable-indexer = false/enable-indexer = true/g'                    "$OUTPUT_DIR/archive/app.toml"
